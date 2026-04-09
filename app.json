@@ -49,11 +49,19 @@
           }
         }
       ],
+      "expo-notifications",
       "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "973f4eea-e76c-484a-9b36-9f5b7b8042b0"
+      }
+    },
+    "owner": "raj-ayush"
   }
 }

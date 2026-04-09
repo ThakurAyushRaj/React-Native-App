@@ -41,3 +41,5 @@ app-example
 # generated native folders
 /ios
 /android
+# Firebase secret file
+react-native-app-697de-firebase-adminsdk-fbsvc-d4c5f20511.json

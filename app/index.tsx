@@ -5,6 +5,7 @@ import {
   statusCodes,
 } from "@react-native-google-signin/google-signin";
 import * as Google from "expo-auth-session/providers/google";
+import * as Notifications from "expo-notifications";
 import { useRouter } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import { useEffect, useRef, useState } from "react";
@@ -24,6 +25,54 @@ import {
 
 WebBrowser.maybeCompleteAuthSession();
 
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+  }),
+});
+
+async function registerForPushNotificationsAsync() {
+  if (Platform.OS === "web") {
+    return null;
+  }
+
+  if (Platform.OS === "android") {
+    await Notifications.setNotificationChannelAsync("default", {
+      name: "default",
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: "#FF231F7C",
+    });
+  }
+
+  const { status: existingStatus } = await Notifications.getPermissionsAsync();
+  let finalStatus = existingStatus;
+
+  if (existingStatus !== "granted") {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
+  }
+
+  if (finalStatus !== "granted") {
+    console.log("Notification permission was not granted.");
+    return null;
+  }
+
+  const deviceToken = await Notifications.getDevicePushTokenAsync();
+  return deviceToken.data;
+}
+
+async function setupPushNotificationsAsync() {
+  const token = await registerForPushNotificationsAsync();
+  if (token) {
+    console.log("Firebase device push token:", token);
+  }
+  return token;
+}
+
 if (Platform.OS !== "web") {
   GoogleSignin.configure({
     webClientId:
@@ -37,7 +86,13 @@ export default function LoginScreen() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [pushTokenReady, setPushTokenReady] = useState(false);
   const entrance = useRef(new Animated.Value(0)).current;
+  const fcmToken = useRef<string | null>(null);
+  const notificationListener = useRef<Notifications.EventSubscription | null>(
+    null,
+  );
+  const responseListener = useRef<Notifications.EventSubscription | null>(null);
 
   // Web-only: expo-auth-session hook must always be called (rules of hooks)
   const [webRequest, webResponse, promptWebAsync] = Google.useAuthRequest({
@@ -96,6 +151,52 @@ export default function LoginScreen() {
       useNativeDriver: true,
     }).start();
   }, [entrance]);
+
+  useEffect(() => {
+    notificationListener.current =
+      Notifications.addNotificationReceivedListener((notification) => {
+        console.log("Notification received:", notification);
+      });
+
+    responseListener.current =
+      Notifications.addNotificationResponseReceivedListener((response) => {
+        console.log("Notification tap response:", response);
+      });
+
+    return () => {
+      if (notificationListener.current) {
+        notificationListener.current.remove();
+      }
+      if (responseListener.current) {
+        responseListener.current.remove();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const setupPush = async () => {
+      try {
+        const token = await setupPushNotificationsAsync();
+        if (isMounted) {
+          fcmToken.current = token ?? null;
+          setPushTokenReady(Boolean(token));
+        }
+      } catch (error) {
+        console.log("Push notification setup error:", error);
+        if (isMounted) {
+          setPushTokenReady(false);
+        }
+      }
+    };
+
+    setupPush();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Handle Google sign-in response on web
   useEffect(() => {
@@ -164,6 +265,13 @@ export default function LoginScreen() {
       };
 
       await AsyncStorage.setItem("user", JSON.stringify(userData));
+      if (fcmToken.current) {
+        fetch("http://127.0.0.1:3000/send-notification", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: fcmToken.current }),
+        }).catch((e) => console.log("Notification send error:", e));
+      }
       router.replace("/home");
     } catch (error) {
       if (isErrorWithCode(error)) {
@@ -207,6 +315,14 @@ export default function LoginScreen() {
 
       await AsyncStorage.setItem("user", JSON.stringify(userData));
 
+      if (fcmToken.current) {
+        fetch("http://127.0.0.1:3000/send-notification", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: fcmToken.current }),
+        }).catch((e) => console.log("Notification send error:", e));
+      }
+
       const persistedUser = await AsyncStorage.getItem("user");
       if (persistedUser) {
         router.replace("/home");
@@ -249,6 +365,12 @@ export default function LoginScreen() {
         <Text style={styles.eyebrow}>HELLO AGAIN</Text>
         <Text style={styles.title}>Login</Text>
         <Text style={styles.subtitle}>Use Google or sign in with email.</Text>
+
+        {pushTokenReady ? (
+          <Text style={styles.pushStatusText}>
+            Push notifications connected to Firebase
+          </Text>
+        ) : null}
 
         <TextInput
           autoCapitalize="none"
@@ -360,6 +482,12 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     color: "#6F665F",
     marginBottom: 22,
+  },
+  pushStatusText: {
+    fontSize: 13,
+    color: "#6A8B5E",
+    marginBottom: 14,
+    fontWeight: "600",
   },
   input: {
     height: 54,
