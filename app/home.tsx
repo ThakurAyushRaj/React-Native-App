@@ -1,39 +1,36 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { GoogleSignin } from "@react-native-google-signin/google-signin";
-import { Image as ExpoImage } from "expo-image";
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
-import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Animated, Easing, StyleSheet, Text, View } from "react-native";
 
-type User = {
-  email: string;
-  name: string;
-  photo?: string;
-  accessToken?: string;
-};
+import BottomNavigation from "./components/BottomNavigation";
+import { User, loadStoredUser, logoutUser } from "./utils/auth";
 
 export default function HomeScreen() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
-  const [imageFailed, setImageFailed] = useState(false);
+  const pageEnter = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(pageEnter, {
+      toValue: 1,
+      duration: 360,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [pageEnter]);
 
   useEffect(() => {
     let isMounted = true;
 
     const loadUser = async () => {
       try {
-        let storedUser = await AsyncStorage.getItem("user");
-
-        // Retry once to avoid redirecting before storage settles on first navigation.
-        if (!storedUser) {
-          await new Promise((resolve) => setTimeout(resolve, 150));
-          storedUser = await AsyncStorage.getItem("user");
-        }
+        const storedUser = await loadStoredUser();
 
         if (storedUser) {
           if (isMounted) {
-            setUser(JSON.parse(storedUser));
+            setUser(storedUser);
           }
         } else {
           router.replace("/"); // redirect to login
@@ -55,20 +52,9 @@ export default function HomeScreen() {
     };
   }, [router]);
 
-  useEffect(() => {
-    setImageFailed(false);
-  }, [user?.photo]);
-
   const handleLogout = async () => {
     try {
-      if (Platform.OS !== "web") {
-        try {
-          await GoogleSignin.signOut();
-        } catch {
-          // ignore sign-out errors
-        }
-      }
-      await AsyncStorage.removeItem("user");
+      await logoutUser();
       router.replace("/");
     } catch (error) {
       console.log("Logout error:", error);
@@ -84,114 +70,85 @@ export default function HomeScreen() {
   }
 
   const displayName = user?.name?.trim() || "Guest User";
-  const displayEmail = user?.email?.trim() || "guest@example.com";
-  const displayPhoto =
-    user?.photo?.trim() ||
-    `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=EDEDED&color=333333`;
-  const avatarInitial = displayName.charAt(0).toUpperCase();
-  const imageSource =
-    Platform.OS !== "web" && user?.accessToken
-      ? {
-          uri: displayPhoto,
-          headers: { Authorization: `Bearer ${user.accessToken}` },
-        }
-      : { uri: displayPhoto };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Home</Text>
+    <LinearGradient
+      colors={["#1E2027", "#242835", "#2A3040"]}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.container}
+    >
+      <Animated.View
+        style={[
+          styles.content,
+          {
+            opacity: pageEnter,
+            transform: [
+              {
+                translateX: pageEnter.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [24, 0],
+                }),
+              },
+            ],
+          },
+        ]}
+      >
+        <Text style={styles.title}>Home</Text>
 
-      {user && (
-        <View style={styles.profileContainer}>
-          {!imageFailed ? (
-            <ExpoImage
-              source={imageSource}
-              style={styles.image}
-              contentFit="cover"
-              cachePolicy="disk"
-              onError={() => setImageFailed(true)}
-            />
-          ) : (
-            <View style={styles.fallbackAvatar}>
-              <Text style={styles.fallbackAvatarText}>{avatarInitial}</Text>
-            </View>
-          )}
-
-          <Text style={styles.name}>{displayName}</Text>
-          <Text style={styles.email}>{displayEmail}</Text>
+        <View style={styles.heroCard}>
+          <Text style={styles.heroHeading}>Welcome back, {displayName}</Text>
+          <Text style={styles.heroText}>
+            Your profile details have been moved to the Profile page. Use the
+            floating navigation below to switch between sections.
+          </Text>
         </View>
-      )}
+      </Animated.View>
 
-      <Pressable style={styles.logoutButton} onPress={handleLogout}>
-        <Text style={styles.logoutButtonText}>Logout</Text>
-      </Pressable>
-    </View>
+      <BottomNavigation activeKey="home" onLogout={handleLogout} />
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 20,
-    justifyContent: "center",
+    paddingHorizontal: 16,
+    paddingTop: 20,
+    paddingBottom: 12,
+    justifyContent: "space-between",
     alignItems: "center",
-    backgroundColor: "#f5f5f5",
+  },
+  content: {
+    width: "100%",
+    paddingTop: 8,
   },
   title: {
-    fontSize: 28,
-    fontWeight: "bold",
-    marginBottom: 30,
-    color: "#333",
-  },
-  profileContainer: {
-    alignItems: "center",
-    marginBottom: 40,
-    backgroundColor: "#fff",
-    padding: 20,
-    borderRadius: 10,
-    width: "100%",
-  },
-  image: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    marginBottom: 15,
-  },
-  fallbackAvatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    marginBottom: 15,
-    backgroundColor: "#D7E7D0",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  fallbackAvatarText: {
-    fontSize: 36,
+    fontSize: 24,
     fontWeight: "700",
-    color: "#1A2A21",
+    marginBottom: 18,
+    color: "#F6F7FB",
   },
-  name: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#333",
-    marginBottom: 5,
-  },
-  email: {
-    fontSize: 16,
-    color: "#666",
-  },
-  logoutButton: {
-    backgroundColor: "#FF6B6B",
-    paddingVertical: 12,
-    paddingHorizontal: 30,
-    borderRadius: 8,
+  heroCard: {
+    backgroundColor: "rgba(14, 18, 27, 0.82)",
+    padding: 16,
+    borderRadius: 18,
     width: "100%",
-    alignItems: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
-  logoutButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "bold",
+  heroHeading: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#F7F8FB",
+    marginBottom: 8,
+  },
+  heroText: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: "#AEB6C5",
   },
 });
