@@ -5,6 +5,7 @@ import {
   statusCodes,
 } from "@react-native-google-signin/google-signin";
 import * as Google from "expo-auth-session/providers/google";
+import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { useRouter } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
@@ -24,6 +25,39 @@ import {
 } from "react-native";
 
 WebBrowser.maybeCompleteAuthSession();
+
+function getNotificationServerUrl() {
+  const hostUri =
+    Constants.expoConfig?.hostUri ??
+    (
+      Constants as {
+        manifest2?: { extra?: { expoGo?: { debugHost?: string } } };
+      }
+    ).manifest2?.extra?.expoGo?.debugHost;
+
+  if (hostUri) {
+    const host = hostUri.split(":")[0];
+    return `http://${host}:3000/send-notification`;
+  }
+
+  return "http://127.0.0.1:3000/send-notification";
+}
+
+async function sendLoginNotification(token: string) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    await fetch(getNotificationServerUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -266,11 +300,9 @@ export default function LoginScreen() {
 
       await AsyncStorage.setItem("user", JSON.stringify(userData));
       if (fcmToken.current) {
-        fetch("http://127.0.0.1:3000/send-notification", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token: fcmToken.current }),
-        }).catch((e) => console.log("Notification send error:", e));
+        sendLoginNotification(fcmToken.current).catch((e) =>
+          console.log("Notification send error:", e),
+        );
       }
       router.replace("/home");
     } catch (error) {
@@ -316,11 +348,9 @@ export default function LoginScreen() {
       await AsyncStorage.setItem("user", JSON.stringify(userData));
 
       if (fcmToken.current) {
-        fetch("http://127.0.0.1:3000/send-notification", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token: fcmToken.current }),
-        }).catch((e) => console.log("Notification send error:", e));
+        sendLoginNotification(fcmToken.current).catch((e) =>
+          console.log("Notification send error:", e),
+        );
       }
 
       const persistedUser = await AsyncStorage.getItem("user");

@@ -5,10 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": [
-      "reactnativeapp",
-      "com.googleusercontent.apps.625045853365-jkk7gtlmoe971qv210l86a1rt6ts5skp"
-    ],
+    "scheme": "reactnativeapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -16,6 +13,18 @@
     },
     "android": {
       "package": "com.rajayush.reactnativeapp",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "com.googleusercontent.apps.625045853365-jkk7gtlmoe971qv210l86a1rt6ts5skp"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",

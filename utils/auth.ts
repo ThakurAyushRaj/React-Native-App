@@ -20,6 +20,10 @@ export async function loadStoredUser(): Promise<User | null> {
   return storedUser ? (JSON.parse(storedUser) as User) : null;
 }
 
+export async function saveStoredUser(user: User) {
+  await AsyncStorage.setItem("user", JSON.stringify(user));
+}
+
 export async function logoutUser() {
   if (Platform.OS !== "web") {
     try {

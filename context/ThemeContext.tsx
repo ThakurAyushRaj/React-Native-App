@@ -1,11 +1,11 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
-    createContext,
-    ReactNode,
-    useContext,
-    useEffect,
-    useMemo,
-    useState,
+  createContext,
+  ReactNode,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
 } from "react";
 
 type ThemeMode = "dark" | "light";
@@ -52,7 +52,7 @@ const darkPalette: ThemePalette = {
   cardText: "#A6AFBF",
   ringBg: "rgba(255, 255, 255, 0.12)",
   blobTertiary: "rgba(100, 120, 163, 0.18)",
-  navBarBg: "rgba(12, 16, 24, 0.80)",
+  navBarBg: "rgba(12, 16, 24, 0.42)",
   navBorder: "rgba(255,255,255,0.18)",
   navIcon: "#C7CEDC",
   navLabel: "#F2F4F8",
@@ -76,7 +76,7 @@ const lightPalette: ThemePalette = {
   cardText: "#617067",
   ringBg: "rgba(79, 138, 104, 0.18)",
   blobTertiary: "rgba(150, 210, 180, 0.55)",
-  navBarBg: "rgba(221, 235, 227, 0.88)",
+  navBarBg: "rgba(221, 235, 227, 0.42)",
   navBorder: "rgba(255, 255, 255, 0.55)",
   navIcon: "#2E4A3B",
   navLabel: "#1A2A21",

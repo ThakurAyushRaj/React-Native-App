@@ -49,11 +49,16 @@ console.log("\nStarting expo run:android via USB tunnel...\n");
 // REACT_NATIVE_PACKAGER_HOSTNAME=127.0.0.1 makes Metro tell the dev client
 // to connect on 127.0.0.1 instead of the LAN IP.  Combined with adb reverse
 // above, all traffic travels over the USB cable — no Wi-Fi needed.
-const child = spawn("npx", ["expo", "run:android"], {
-  stdio: "inherit",
-  shell: true,
-  env: { ...process.env, REACT_NATIVE_PACKAGER_HOSTNAME: "127.0.0.1" },
-});
+const child =
+  process.platform === "win32"
+    ? spawn("cmd.exe", ["/d", "/s", "/c", "npx expo run:android"], {
+        stdio: "inherit",
+        env: { ...process.env, REACT_NATIVE_PACKAGER_HOSTNAME: "127.0.0.1" },
+      })
+    : spawn("npx", ["expo", "run:android"], {
+        stdio: "inherit",
+        env: { ...process.env, REACT_NATIVE_PACKAGER_HOSTNAME: "127.0.0.1" },
+      });
 
 child.on("exit", (code) => {
   process.exit(code ?? 0);

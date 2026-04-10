@@ -1,11 +1,26 @@
+import { useFocusEffect } from "@react-navigation/native";
+import { Image as ExpoImage } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
-import { Animated, Easing, StyleSheet, Switch, Text, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Alert,
+  Animated,
+  Easing,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { useAppTheme } from "./context/ThemeContext";
-import { User, loadStoredUser } from "./utils/auth";
+import { useAppTheme } from "@/context/ThemeContext";
+import { User, loadStoredUser, logoutUser, saveStoredUser } from "@/utils/auth";
 
 export default function SettingsScreen() {
   const NAV_OVERLAY_SPACE = 112;
@@ -15,7 +30,17 @@ export default function SettingsScreen() {
   const [user, setUser] = useState<User | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [isLogoutModalVisible, setIsLogoutModalVisible] = useState(false);
+  const [isPhotoPreviewModalVisible, setIsPhotoPreviewModalVisible] =
+    useState(false);
+  const [imageFailed, setImageFailed] = useState(false);
+  const [profileNameInput, setProfileNameInput] = useState("");
+  const [pendingProfilePhotoUri, setPendingProfilePhotoUri] = useState<
+    string | null
+  >(null);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
   const pageEnter = useRef(new Animated.Value(0)).current;
+  const logoutModalAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.timing(pageEnter, {
@@ -26,36 +51,154 @@ export default function SettingsScreen() {
     }).start();
   }, [pageEnter]);
 
-  useEffect(() => {
-    let isMounted = true;
+  const hydrateUser = useCallback(async () => {
+    try {
+      const storedUser = await loadStoredUser();
 
-    const loadUser = async () => {
-      try {
-        const storedUser = await loadStoredUser();
-
-        if (storedUser) {
-          if (isMounted) {
-            setUser(storedUser);
-          }
-        } else {
-          router.replace("/");
-        }
-      } catch (error) {
-        console.log("Error loading user:", error);
+      if (storedUser) {
+        setUser(storedUser);
+        setProfileNameInput(storedUser.name ?? "");
+      } else {
         router.replace("/");
-      } finally {
-        if (isMounted) {
-          setIsCheckingAuth(false);
-        }
       }
-    };
-
-    loadUser();
-
-    return () => {
-      isMounted = false;
-    };
+    } catch (error) {
+      console.log("Error loading user:", error);
+      router.replace("/");
+    } finally {
+      setIsCheckingAuth(false);
+    }
   }, [router]);
+
+  useEffect(() => {
+    void hydrateUser();
+  }, [hydrateUser]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void hydrateUser();
+    }, [hydrateUser]),
+  );
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [user?.photo]);
+
+  const performLogout = async () => {
+    try {
+      await logoutUser();
+      router.replace("/");
+    } catch {
+      Alert.alert("Error", "Failed to logout. Please try again.");
+    }
+  };
+
+  const handleSaveProfile = async () => {
+    if (!user) {
+      return;
+    }
+
+    const trimmedName = profileNameInput.trim();
+
+    if (!trimmedName) {
+      Alert.alert("Missing name", "Please enter your name.");
+      return;
+    }
+
+    setIsSavingProfile(true);
+    try {
+      const updatedUser: User = {
+        ...user,
+        name: trimmedName,
+      };
+
+      await saveStoredUser(updatedUser);
+      setUser(updatedUser);
+      Alert.alert("Saved", "Profile details updated.");
+    } catch (error) {
+      console.log("Save profile error:", error);
+      Alert.alert("Save failed", "Could not update profile details.");
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  const openProfilePhotoPicker = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!permission.granted) {
+      Alert.alert(
+        "Permission required",
+        "Allow gallery access to choose a display photo.",
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.9,
+    });
+
+    if (!result.canceled && result.assets?.[0]?.uri) {
+      setPendingProfilePhotoUri(result.assets[0].uri);
+      setIsPhotoPreviewModalVisible(true);
+    }
+  };
+
+  const applyProfilePhoto = async () => {
+    if (!user || !pendingProfilePhotoUri) {
+      setIsPhotoPreviewModalVisible(false);
+      return;
+    }
+
+    try {
+      const updatedUser: User = {
+        ...user,
+        photo: pendingProfilePhotoUri,
+      };
+
+      await saveStoredUser(updatedUser);
+      setUser(updatedUser);
+      setIsPhotoPreviewModalVisible(false);
+      setPendingProfilePhotoUri(null);
+      Alert.alert("Saved", "Display photo updated.");
+    } catch (error) {
+      console.log("Save display photo error:", error);
+      Alert.alert("Save failed", "Could not update display photo.");
+    }
+  };
+
+  const openLogoutModal = () => {
+    setIsLogoutModalVisible(true);
+    logoutModalAnim.setValue(0);
+    Animated.parallel([
+      Animated.timing(logoutModalAnim, {
+        toValue: 1,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
+  const closeLogoutModal = () => {
+    Animated.timing(logoutModalAnim, {
+      toValue: 0,
+      duration: 180,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) {
+        setIsLogoutModalVisible(false);
+      }
+    });
+  };
+
+  const handleLogoutConfirm = async () => {
+    closeLogoutModal();
+    await performLogout();
+  };
 
   if (isCheckingAuth) {
     return (
@@ -64,6 +207,14 @@ export default function SettingsScreen() {
       </View>
     );
   }
+
+  const displayName =
+    profileNameInput.trim() || user?.name?.trim() || "Guest User";
+  const displayEmail = user?.email?.trim() || "guest@example.com";
+  const displayPhoto =
+    user?.photo?.trim() ||
+    `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=D7E7D0&color=1A2A21`;
+  const avatarInitial = displayName.charAt(0).toUpperCase();
 
   return (
     <LinearGradient
@@ -74,7 +225,6 @@ export default function SettingsScreen() {
         styles.container,
         {
           paddingTop: insets.top + 14,
-          paddingBottom: insets.bottom + NAV_OVERLAY_SPACE,
         },
       ]}
     >
@@ -93,106 +243,365 @@ export default function SettingsScreen() {
         style={[styles.blobTertiary, { backgroundColor: theme.blobTertiary }]}
       />
 
-      <Animated.View
-        style={[
-          styles.content,
-          {
-            opacity: pageEnter,
-            transform: [
-              {
-                translateX: pageEnter.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [24, 0],
-                }),
-              },
-            ],
-          },
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={[
+          styles.contentContainer,
+          { paddingBottom: NAV_OVERLAY_SPACE + insets.bottom + 12 },
         ]}
+        showsVerticalScrollIndicator={false}
+        decelerationRate="fast"
       >
-        <View
+        <Animated.View
           style={[
-            styles.badge,
-            { backgroundColor: theme.badgeBg, borderColor: theme.badgeBorder },
+            {
+              opacity: pageEnter,
+              transform: [
+                {
+                  translateX: pageEnter.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [24, 0],
+                  }),
+                },
+              ],
+            },
           ]}
         >
-          <Text style={[styles.badgeText, { color: theme.badgeText }]}>
-            PREFERENCES
-          </Text>
-        </View>
-
-        <Text style={[styles.title, { color: theme.title }]}>Settings</Text>
-        <Text style={[styles.subtitle, { color: theme.subtitle }]}>
-          Configure your app preferences and account controls here.
-        </Text>
-
-        <View style={[styles.settingsCard, { backgroundColor: theme.cardBg }]}>
           <View
-            style={[styles.cardAccent, { backgroundColor: theme.cardAccent }]}
-          />
-          <View style={styles.settingRow}>
-            <View>
-              <Text style={[styles.settingTitle, { color: theme.cardTitle }]}>
-                Push Notifications
+            style={[
+              styles.badge,
+              {
+                backgroundColor: theme.badgeBg,
+                borderColor: theme.badgeBorder,
+              },
+            ]}
+          >
+            <Text style={[styles.badgeText, { color: theme.badgeText }]}>
+              SETTINGS
+            </Text>
+          </View>
+
+          <View
+            style={[styles.settingsCard, { backgroundColor: theme.cardBg }]}
+          >
+            <View
+              style={[styles.cardAccent, { backgroundColor: theme.cardAccent }]}
+            />
+
+            <View style={styles.profileSummaryRow}>
+              {!imageFailed ? (
+                <ExpoImage
+                  source={{ uri: displayPhoto }}
+                  style={styles.profileAvatar}
+                  contentFit="cover"
+                  cachePolicy="disk"
+                  onError={() => setImageFailed(true)}
+                />
+              ) : (
+                <View style={styles.profileAvatarFallback}>
+                  <Text style={styles.profileAvatarFallbackText}>
+                    {avatarInitial}
+                  </Text>
+                </View>
+              )}
+
+              <View style={styles.profileInfoWrap}>
+                <Text style={[styles.profileName, { color: theme.cardTitle }]}>
+                  {displayName}
+                </Text>
+                <Text style={[styles.profileEmail, { color: theme.cardText }]}>
+                  {displayEmail}
+                </Text>
+              </View>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.editPhotoButton,
+                  {
+                    backgroundColor: theme.activeBubbleBg,
+                  },
+                  pressed && styles.logoutButtonPressed,
+                ]}
+                onPress={openProfilePhotoPicker}
+              >
+                <Text style={styles.editPhotoButtonText}>Change DP</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.profileFormRow}>
+              <TextInput
+                style={[
+                  styles.profileInput,
+                  { color: theme.cardTitle, borderColor: theme.cardBorder },
+                ]}
+                value={profileNameInput}
+                onChangeText={setProfileNameInput}
+                placeholder="Your name"
+                placeholderTextColor={theme.cardText}
+              />
+              <Pressable
+                style={({ pressed }) => [
+                  styles.saveProfileButton,
+                  { backgroundColor: theme.activeBubbleBg },
+                  (pressed || isSavingProfile) && styles.logoutButtonPressed,
+                ]}
+                onPress={handleSaveProfile}
+                disabled={isSavingProfile}
+              >
+                <Text style={styles.saveProfileButtonText}>
+                  {isSavingProfile ? "Saving..." : "Save Profile"}
+                </Text>
+              </Pressable>
+            </View>
+
+            <View
+              style={[styles.separator, { backgroundColor: theme.cardBorder }]}
+            />
+
+            <View style={styles.settingRow}>
+              <View>
+                <Text style={[styles.settingTitle, { color: theme.cardTitle }]}>
+                  Push Notifications
+                </Text>
+                <Text style={[styles.settingText, { color: theme.cardText }]}>
+                  Receive updates and reminders.
+                </Text>
+              </View>
+              <Switch
+                value={notificationsEnabled}
+                onValueChange={setNotificationsEnabled}
+                trackColor={{ false: "#CDD2DA", true: "#FFB39F" }}
+                thumbColor={
+                  notificationsEnabled ? theme.activeBubbleBg : "#FFFFFF"
+                }
+              />
+            </View>
+
+            <View
+              style={[styles.separator, { backgroundColor: theme.cardBorder }]}
+            />
+
+            <View style={styles.settingRow}>
+              <View>
+                <Text style={[styles.settingTitle, { color: theme.cardTitle }]}>
+                  Dark Theme
+                </Text>
+                <Text style={[styles.settingText, { color: theme.cardText }]}>
+                  Enable dark mode for a better experience in low light.
+                </Text>
+              </View>
+              <Switch
+                value={isDark}
+                onValueChange={(enabled) =>
+                  setThemeMode(enabled ? "dark" : "light")
+                }
+                trackColor={{ false: "#CDD2DA", true: "#FFB39F" }}
+                thumbColor={isDark ? theme.activeBubbleBg : "#FFFFFF"}
+              />
+            </View>
+
+            <View
+              style={[styles.separator, { backgroundColor: theme.cardBorder }]}
+            />
+
+            <View style={styles.metaRow}>
+              <Text style={[styles.metaLabel, { color: theme.cardText }]}>
+                Account Type
               </Text>
-              <Text style={[styles.settingText, { color: theme.cardText }]}>
-                Receive updates and reminders.
+              <Text style={[styles.metaValue, { color: theme.cardTitle }]}>
+                Authenticated User
               </Text>
             </View>
-            <Switch
-              value={notificationsEnabled}
-              onValueChange={setNotificationsEnabled}
-              trackColor={{ false: "#CDD2DA", true: "#FFB39F" }}
-              thumbColor={
-                notificationsEnabled ? theme.activeBubbleBg : "#FFFFFF"
-              }
-            />
-          </View>
-
-          <View
-            style={[styles.separator, { backgroundColor: theme.cardBorder }]}
-          />
-
-          <View style={styles.settingRow}>
-            <View>
-              <Text style={[styles.settingTitle, { color: theme.cardTitle }]}>
-                Dark Theme
+            <View style={styles.metaRow}>
+              <Text style={[styles.metaLabel, { color: theme.cardText }]}>
+                Current mode
               </Text>
-              <Text style={[styles.settingText, { color: theme.cardText }]}>
-                Enable dark mode for a better experience in low light.
+              <Text style={[styles.metaValue, { color: theme.cardTitle }]}>
+                {mode === "dark" ? "Dark" : "Light"}
               </Text>
             </View>
-            <Switch
-              value={isDark}
-              onValueChange={(enabled) =>
-                setThemeMode(enabled ? "dark" : "light")
-              }
-              trackColor={{ false: "#CDD2DA", true: "#FFB39F" }}
-              thumbColor={isDark ? theme.activeBubbleBg : "#FFFFFF"}
-            />
-          </View>
 
-          <View
-            style={[styles.separator, { backgroundColor: theme.cardBorder }]}
+            <Pressable
+              style={({ pressed }) => [
+                styles.logoutButton,
+                { backgroundColor: "#E74C3C" },
+                pressed && styles.logoutButtonPressed,
+              ]}
+              onPress={openLogoutModal}
+            >
+              <Text style={styles.logoutButtonText}>Logout</Text>
+            </Pressable>
+          </View>
+        </Animated.View>
+      </ScrollView>
+
+      <Modal
+        visible={isPhotoPreviewModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setIsPhotoPreviewModalVisible(false);
+          setPendingProfilePhotoUri(null);
+        }}
+      >
+        <View style={styles.modalBackdrop}>
+          <Pressable
+            style={styles.modalBackdropPressable}
+            onPress={() => {
+              setIsPhotoPreviewModalVisible(false);
+              setPendingProfilePhotoUri(null);
+            }}
           />
+          <View
+            style={[
+              styles.modalCard,
+              {
+                backgroundColor: theme.cardBg,
+                borderColor: theme.cardBorder,
+              },
+            ]}
+          >
+            <Text style={[styles.modalTitle, { color: theme.cardTitle }]}>
+              Preview DP
+            </Text>
+            <Text style={[styles.modalMessage, { color: theme.cardText }]}>
+              This is how your display photo will look.
+            </Text>
 
-          <View style={styles.metaRow}>
-            <Text style={[styles.metaLabel, { color: theme.cardText }]}>
-              Signed in as
-            </Text>
-            <Text style={[styles.metaValue, { color: theme.cardTitle }]}>
-              {user?.email ?? "guest@example.com"}
-            </Text>
-          </View>
-          <View style={styles.metaRow}>
-            <Text style={[styles.metaLabel, { color: theme.cardText }]}>
-              Current mode
-            </Text>
-            <Text style={[styles.metaValue, { color: theme.cardTitle }]}>
-              {mode === "dark" ? "Dark" : "Light"}
-            </Text>
+            <View style={styles.dpPreviewWrap}>
+              {pendingProfilePhotoUri ? (
+                <ExpoImage
+                  source={{ uri: pendingProfilePhotoUri }}
+                  style={styles.dpPreviewImage}
+                  contentFit="cover"
+                />
+              ) : null}
+            </View>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalButton,
+                  styles.modalCancelButton,
+                  {
+                    borderColor: theme.cardBorder,
+                    backgroundColor: theme.badgeBg,
+                  },
+                  pressed && styles.modalButtonPressed,
+                ]}
+                onPress={() => {
+                  setIsPhotoPreviewModalVisible(false);
+                  setPendingProfilePhotoUri(null);
+                }}
+              >
+                <Text
+                  style={[styles.modalCancelText, { color: theme.cardTitle }]}
+                >
+                  Cancel
+                </Text>
+              </Pressable>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalButton,
+                  styles.modalLogoutButton,
+                  pressed && styles.modalButtonPressed,
+                ]}
+                onPress={applyProfilePhoto}
+              >
+                <Text style={styles.modalLogoutText}>Use Photo</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
-      </Animated.View>
+      </Modal>
+
+      <Modal
+        visible={isLogoutModalVisible}
+        transparent
+        animationType="none"
+        onRequestClose={closeLogoutModal}
+      >
+        <Animated.View
+          style={[
+            styles.modalBackdrop,
+            {
+              opacity: logoutModalAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0, 1],
+              }),
+            },
+          ]}
+        >
+          <Pressable
+            style={styles.modalBackdropPressable}
+            onPress={closeLogoutModal}
+          />
+          <Animated.View
+            style={[
+              styles.modalCard,
+              {
+                backgroundColor: theme.cardBg,
+                borderColor: theme.cardBorder,
+                transform: [
+                  {
+                    translateY: logoutModalAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [20, 0],
+                    }),
+                  },
+                  {
+                    scale: logoutModalAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.94, 1],
+                    }),
+                  },
+                ],
+                opacity: logoutModalAnim,
+              },
+            ]}
+          >
+            <Text style={[styles.modalTitle, { color: theme.cardTitle }]}>
+              Logout
+            </Text>
+            <Text style={[styles.modalMessage, { color: theme.cardText }]}>
+              Are you sure you want to logout?
+            </Text>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalButton,
+                  styles.modalCancelButton,
+                  {
+                    borderColor: theme.cardBorder,
+                    backgroundColor: theme.badgeBg,
+                  },
+                  pressed && styles.modalButtonPressed,
+                ]}
+                onPress={closeLogoutModal}
+              >
+                <Text
+                  style={[styles.modalCancelText, { color: theme.cardTitle }]}
+                >
+                  Cancel
+                </Text>
+              </Pressable>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalButton,
+                  styles.modalLogoutButton,
+                  pressed && styles.modalButtonPressed,
+                ]}
+                onPress={handleLogoutConfirm}
+              >
+                <Text style={styles.modalLogoutText}>Logout</Text>
+              </Pressable>
+            </View>
+          </Animated.View>
+        </Animated.View>
+      </Modal>
     </LinearGradient>
   );
 }
@@ -225,6 +634,10 @@ const styles = StyleSheet.create({
   },
   content: {
     width: "100%",
+    maxWidth: 920,
+    alignSelf: "center",
+  },
+  contentContainer: {
     paddingTop: 8,
   },
   badge: {
@@ -289,6 +702,76 @@ const styles = StyleSheet.create({
   metaRow: {
     paddingVertical: 12,
   },
+  profileSummaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 8,
+  },
+  profileAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+  },
+  profileAvatarFallback: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#D7E7D0",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  profileAvatarFallbackText: {
+    fontSize: 24,
+    fontWeight: "700",
+    color: "#1A2A21",
+  },
+  profileInfoWrap: {
+    flex: 1,
+  },
+  profileName: {
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  profileEmail: {
+    marginTop: 2,
+    fontSize: 13,
+  },
+  profileFormRow: {
+    marginTop: 8,
+    gap: 8,
+  },
+  profileInput: {
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    backgroundColor: "rgba(255,255,255,0.05)",
+  },
+  saveProfileButton: {
+    height: 38,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  saveProfileButtonText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  editPhotoButton: {
+    height: 36,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  editPhotoButtonText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "700",
+  },
   metaLabel: {
     fontSize: 13,
     marginBottom: 6,
@@ -323,5 +806,97 @@ const styles = StyleSheet.create({
     height: 72,
     borderRadius: 36,
     opacity: 0.55,
+  },
+  logoutButton: {
+    width: "100%",
+    height: 44,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 16,
+  },
+  logoutButtonPressed: {
+    opacity: 0.85,
+  },
+  logoutButtonText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.38)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 20,
+  },
+  modalBackdropPressable: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  modalCard: {
+    width: "100%",
+    maxWidth: 360,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+    shadowColor: "#000",
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 10,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    marginBottom: 6,
+  },
+  modalMessage: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 14,
+  },
+  modalActions: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  modalButton: {
+    flex: 1,
+    height: 42,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalCancelButton: {
+    borderWidth: 1,
+  },
+  modalLogoutButton: {
+    backgroundColor: "#E74C3C",
+  },
+  modalButtonPressed: {
+    opacity: 0.88,
+    transform: [{ scale: 0.98 }],
+  },
+  modalCancelText: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  modalLogoutText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  dpPreviewWrap: {
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    overflow: "hidden",
+    alignSelf: "center",
+    marginBottom: 14,
+  },
+  dpPreviewImage: {
+    width: "100%",
+    height: "100%",
   },
 });
