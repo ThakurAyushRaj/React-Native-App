@@ -1,11 +1,10 @@
-import { Stack, usePathname, useRouter } from "expo-router";
+import { Stack, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import BottomNavigation from "./components/BottomNavigation";
-import { ThemeProvider, useAppTheme } from "./context/ThemeContext";
-import { logoutUser } from "./utils/auth";
+import { ThemeProvider, useAppTheme } from "@/context/ThemeContext";
 
 export default function RootLayout() {
   return (
@@ -17,46 +16,42 @@ export default function RootLayout() {
 
 function RootNavigator() {
   const { isDark } = useAppTheme();
-  const router = useRouter();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
 
   const isAppScreen =
-    pathname === "/home" || pathname === "/profile" || pathname === "/settings";
+    pathname === "/home" ||
+    pathname === "/photo-editor" ||
+    pathname === "/settings" ||
+    pathname === "/category";
 
   const activeKey =
-    pathname === "/profile"
-      ? "profile"
+    pathname === "/photo-editor"
+      ? "photo-editor"
       : pathname === "/settings"
         ? "settings"
-        : "home";
-
-  const handleLogout = async () => {
-    try {
-      await logoutUser();
-      router.replace("/");
-    } catch (error) {
-      console.log("Logout error:", error);
-    }
-  };
+        : pathname === "/category"
+          ? "category"
+          : "home";
 
   return (
     <View style={styles.root}>
       <View style={styles.stackContainer}>
-        <Stack>
+        <Stack screenOptions={{ headerShown: false, animation: "fade" }}>
           <Stack.Screen name="index" options={{ headerShown: false }} />
           <Stack.Screen
             name="create-account"
             options={{ headerShown: false }}
           />
           <Stack.Screen name="home" options={{ headerShown: false }} />
-          <Stack.Screen name="profile" options={{ headerShown: false }} />
+          <Stack.Screen name="category" options={{ headerShown: false }} />
           <Stack.Screen name="settings" options={{ headerShown: false }} />
+          <Stack.Screen name="photo-editor" options={{ headerShown: false }} />
         </Stack>
       </View>
       {isAppScreen ? (
         <View style={[styles.navOverlay, { bottom: insets.bottom + 6 }]}>
-          <BottomNavigation activeKey={activeKey} onLogout={handleLogout} />
+          <BottomNavigation activeKey={activeKey} />
         </View>
       ) : null}
       <StatusBar style={isDark ? "light" : "dark"} />
@@ -73,8 +68,10 @@ const styles = StyleSheet.create({
   },
   navOverlay: {
     position: "absolute",
-    left: 16,
-    right: 16,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 16,
+    alignItems: "center",
     zIndex: 1000,
   },
 });
