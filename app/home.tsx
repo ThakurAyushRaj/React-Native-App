@@ -2,12 +2,16 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { Animated, Easing, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import BottomNavigation from "./components/BottomNavigation";
-import { User, loadStoredUser, logoutUser } from "./utils/auth";
+import { useAppTheme } from "./context/ThemeContext";
+import { User, loadStoredUser } from "./utils/auth";
 
 export default function HomeScreen() {
+  const NAV_OVERLAY_SPACE = 112;
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { theme, isDark } = useAppTheme();
   const [user, setUser] = useState<User | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const pageEnter = useRef(new Animated.Value(0)).current;
@@ -52,15 +56,6 @@ export default function HomeScreen() {
     };
   }, [router]);
 
-  const handleLogout = async () => {
-    try {
-      await logoutUser();
-      router.replace("/");
-    } catch (error) {
-      console.log("Logout error:", error);
-    }
-  };
-
   if (isCheckingAuth) {
     return (
       <View style={styles.container}>
@@ -73,11 +68,32 @@ export default function HomeScreen() {
 
   return (
     <LinearGradient
-      colors={["#1E2027", "#242835", "#2A3040"]}
+      colors={theme.gradient}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
-      style={styles.container}
+      style={[
+        styles.container,
+        {
+          paddingTop: insets.top + 14,
+          paddingBottom: insets.bottom + NAV_OVERLAY_SPACE,
+        },
+      ]}
     >
+      <View
+        style={[styles.accentBlob, { backgroundColor: theme.accentBlob }]}
+      />
+      <View
+        style={[
+          styles.accentBlobSecondary,
+          { backgroundColor: theme.accentBlobSecondary },
+        ]}
+      />
+      <View style={[styles.ring1, { borderColor: theme.ringBg }]} />
+      <View style={[styles.ring2, { borderColor: theme.ringBg }]} />
+      <View
+        style={[styles.blobTertiary, { backgroundColor: theme.blobTertiary }]}
+      />
+
       <Animated.View
         style={[
           styles.content,
@@ -94,18 +110,32 @@ export default function HomeScreen() {
           },
         ]}
       >
-        <Text style={styles.title}>Home</Text>
+        <View
+          style={[
+            styles.badge,
+            { backgroundColor: theme.badgeBg, borderColor: theme.badgeBorder },
+          ]}
+        >
+          <Text style={[styles.badgeText, { color: theme.badgeText }]}>
+            DASHBOARD
+          </Text>
+        </View>
 
-        <View style={styles.heroCard}>
-          <Text style={styles.heroHeading}>Welcome back, {displayName}</Text>
-          <Text style={styles.heroText}>
+        <Text style={[styles.title, { color: theme.title }]}>Home</Text>
+
+        <View style={[styles.heroCard, { backgroundColor: theme.cardBg }]}>
+          <View
+            style={[styles.cardAccent, { backgroundColor: theme.cardAccent }]}
+          />
+          <Text style={[styles.heroHeading, { color: theme.cardTitle }]}>
+            Welcome back, {displayName}
+          </Text>
+          <Text style={[styles.heroText, { color: theme.cardText }]}>
             Your profile details have been moved to the Profile page. Use the
             floating navigation below to switch between sections.
           </Text>
         </View>
       </Animated.View>
-
-      <BottomNavigation activeKey="home" onLogout={handleLogout} />
     </LinearGradient>
   );
 }
@@ -114,41 +144,100 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingHorizontal: 16,
-    paddingTop: 20,
-    paddingBottom: 12,
     justifyContent: "space-between",
     alignItems: "center",
+    position: "relative",
+  },
+  accentBlob: {
+    position: "absolute",
+    top: 82,
+    left: -36,
+    width: 190,
+    height: 190,
+    borderRadius: 95,
+    opacity: 0.8,
+  },
+  accentBlobSecondary: {
+    position: "absolute",
+    bottom: 210,
+    right: -28,
+    width: 160,
+    height: 160,
+    borderRadius: 80,
+    opacity: 0.72,
   },
   content: {
     width: "100%",
     paddingTop: 8,
   },
+  badge: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    marginBottom: 10,
+  },
+  badgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1.2,
+  },
   title: {
     fontSize: 24,
     fontWeight: "700",
     marginBottom: 18,
-    color: "#F6F7FB",
   },
   heroCard: {
-    backgroundColor: "rgba(14, 18, 27, 0.82)",
     padding: 16,
     borderRadius: 18,
     width: "100%",
+    elevation: 0,
     shadowColor: "#000",
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
+    shadowOpacity: 0.1,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+  },
+  cardAccent: {
+    width: 54,
+    height: 4,
+    borderRadius: 999,
+    marginBottom: 10,
   },
   heroHeading: {
     fontSize: 20,
     fontWeight: "700",
-    color: "#F7F8FB",
     marginBottom: 8,
   },
   heroText: {
     fontSize: 14,
     lineHeight: 20,
-    color: "#AEB6C5",
+  },
+  ring1: {
+    position: "absolute",
+    top: 50,
+    right: -60,
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    borderWidth: 1.5,
+  },
+  ring2: {
+    position: "absolute",
+    top: "44%",
+    left: -55,
+    width: 136,
+    height: 136,
+    borderRadius: 68,
+    borderWidth: 1,
+  },
+  blobTertiary: {
+    position: "absolute",
+    top: "26%",
+    right: 22,
+    width: 66,
+    height: 66,
+    borderRadius: 33,
+    opacity: 0.6,
   },
 });

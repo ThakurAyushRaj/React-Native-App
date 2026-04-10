@@ -10,12 +10,16 @@ import {
     Text,
     View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import BottomNavigation from "./components/BottomNavigation";
-import { User, loadStoredUser, logoutUser } from "./utils/auth";
+import { useAppTheme } from "./context/ThemeContext";
+import { User, loadStoredUser } from "./utils/auth";
 
 export default function ProfileScreen() {
+  const NAV_OVERLAY_SPACE = 112;
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { theme, isDark } = useAppTheme();
   const [user, setUser] = useState<User | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [imageFailed, setImageFailed] = useState(false);
@@ -65,15 +69,6 @@ export default function ProfileScreen() {
     setImageFailed(false);
   }, [user?.photo]);
 
-  const handleLogout = async () => {
-    try {
-      await logoutUser();
-      router.replace("/");
-    } catch (error) {
-      console.log("Logout error:", error);
-    }
-  };
-
   if (isCheckingAuth) {
     return (
       <View style={styles.container}>
@@ -98,11 +93,32 @@ export default function ProfileScreen() {
 
   return (
     <LinearGradient
-      colors={["#1E2027", "#242835", "#2A3040"]}
+      colors={theme.gradient}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
-      style={styles.container}
+      style={[
+        styles.container,
+        {
+          paddingTop: insets.top + 14,
+          paddingBottom: insets.bottom + NAV_OVERLAY_SPACE,
+        },
+      ]}
     >
+      <View
+        style={[styles.accentBlob, { backgroundColor: theme.accentBlob }]}
+      />
+      <View
+        style={[
+          styles.accentBlobSecondary,
+          { backgroundColor: theme.accentBlobSecondary },
+        ]}
+      />
+      <View style={[styles.ring1, { borderColor: theme.ringBg }]} />
+      <View style={[styles.ring2, { borderColor: theme.ringBg }]} />
+      <View
+        style={[styles.blobTertiary, { backgroundColor: theme.blobTertiary }]}
+      />
+
       <Animated.View
         style={[
           styles.content,
@@ -119,9 +135,23 @@ export default function ProfileScreen() {
           },
         ]}
       >
-        <Text style={styles.title}>Profile</Text>
+        <View
+          style={[
+            styles.badge,
+            { backgroundColor: theme.badgeBg, borderColor: theme.badgeBorder },
+          ]}
+        >
+          <Text style={[styles.badgeText, { color: theme.badgeText }]}>
+            ACCOUNT
+          </Text>
+        </View>
 
-        <View style={styles.profileCard}>
+        <Text style={[styles.title, { color: theme.title }]}>Profile</Text>
+
+        <View style={[styles.profileCard, { backgroundColor: theme.cardBg }]}>
+          <View
+            style={[styles.cardAccent, { backgroundColor: theme.cardAccent }]}
+          />
           {!imageFailed ? (
             <ExpoImage
               source={imageSource}
@@ -136,25 +166,45 @@ export default function ProfileScreen() {
             </View>
           )}
 
-          <Text style={styles.name}>{displayName}</Text>
-          <Text style={styles.email}>{displayEmail}</Text>
+          <Text style={[styles.name, { color: theme.cardTitle }]}>
+            {displayName}
+          </Text>
+          <Text style={[styles.email, { color: theme.cardText }]}>
+            {displayEmail}
+          </Text>
 
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Full Name</Text>
-            <Text style={styles.detailValue}>{displayName}</Text>
+          <View
+            style={[styles.detailRow, { borderTopColor: theme.cardBorder }]}
+          >
+            <Text style={[styles.detailLabel, { color: theme.cardText }]}>
+              Full Name
+            </Text>
+            <Text style={[styles.detailValue, { color: theme.cardTitle }]}>
+              {displayName}
+            </Text>
           </View>
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Email</Text>
-            <Text style={styles.detailValue}>{displayEmail}</Text>
+          <View
+            style={[styles.detailRow, { borderTopColor: theme.cardBorder }]}
+          >
+            <Text style={[styles.detailLabel, { color: theme.cardText }]}>
+              Email
+            </Text>
+            <Text style={[styles.detailValue, { color: theme.cardTitle }]}>
+              {displayEmail}
+            </Text>
           </View>
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Account Type</Text>
-            <Text style={styles.detailValue}>Authenticated User</Text>
+          <View
+            style={[styles.detailRow, { borderTopColor: theme.cardBorder }]}
+          >
+            <Text style={[styles.detailLabel, { color: theme.cardText }]}>
+              Account Type
+            </Text>
+            <Text style={[styles.detailValue, { color: theme.cardTitle }]}>
+              Authenticated User
+            </Text>
           </View>
         </View>
       </Animated.View>
-
-      <BottomNavigation activeKey="profile" onLogout={handleLogout} />
     </LinearGradient>
   );
 }
@@ -163,31 +213,66 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingHorizontal: 16,
-    paddingTop: 20,
-    paddingBottom: 12,
     justifyContent: "space-between",
     alignItems: "center",
+    position: "relative",
+  },
+  accentBlob: {
+    position: "absolute",
+    top: 82,
+    right: -32,
+    width: 178,
+    height: 178,
+    borderRadius: 89,
+    opacity: 0.78,
+  },
+  accentBlobSecondary: {
+    position: "absolute",
+    bottom: 206,
+    left: -22,
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    opacity: 0.68,
   },
   content: {
     width: "100%",
     paddingTop: 8,
   },
+  badge: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    marginBottom: 10,
+  },
+  badgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1.2,
+  },
   title: {
     fontSize: 24,
     fontWeight: "700",
     marginBottom: 18,
-    color: "#F6F7FB",
   },
   profileCard: {
     width: "100%",
-    backgroundColor: "rgba(14, 18, 27, 0.84)",
     borderRadius: 18,
     padding: 16,
+    elevation: 0,
     shadowColor: "#000",
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
+    shadowOpacity: 0.1,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+  },
+  cardAccent: {
+    width: 54,
+    height: 4,
+    borderRadius: 999,
+    marginBottom: 10,
+    alignSelf: "flex-start",
   },
   image: {
     width: 96,
@@ -214,12 +299,10 @@ const styles = StyleSheet.create({
   name: {
     fontSize: 20,
     fontWeight: "700",
-    color: "#F7F8FB",
     textAlign: "center",
   },
   email: {
     fontSize: 14,
-    color: "#AEB6C5",
     textAlign: "center",
     marginTop: 4,
     marginBottom: 14,
@@ -227,16 +310,40 @@ const styles = StyleSheet.create({
   detailRow: {
     paddingVertical: 11,
     borderTopWidth: 1,
-    borderTopColor: "rgba(255,255,255,0.08)",
   },
   detailLabel: {
     fontSize: 13,
-    color: "#8891A0",
     marginBottom: 6,
   },
   detailValue: {
     fontSize: 15,
-    color: "#F7F8FB",
     fontWeight: "600",
+  },
+  ring1: {
+    position: "absolute",
+    top: 44,
+    left: -66,
+    width: 210,
+    height: 210,
+    borderRadius: 105,
+    borderWidth: 1.5,
+  },
+  ring2: {
+    position: "absolute",
+    bottom: 160,
+    right: -50,
+    width: 136,
+    height: 136,
+    borderRadius: 68,
+    borderWidth: 1,
+  },
+  blobTertiary: {
+    position: "absolute",
+    top: "40%",
+    right: 18,
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    opacity: 0.55,
   },
 });
