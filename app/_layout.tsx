@@ -3,13 +3,16 @@ import { StatusBar } from "expo-status-bar";
 import { StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import BottomNavigation from "./components/BottomNavigation";
+import { AuthProvider } from "@/context/AuthContext";
 import { ThemeProvider, useAppTheme } from "@/context/ThemeContext";
+import BottomNavigation from "./components/BottomNavigation";
 
 export default function RootLayout() {
   return (
     <ThemeProvider>
-      <RootNavigator />
+      <AuthProvider>
+        <RootNavigator />
+      </AuthProvider>
     </ThemeProvider>
   );
 }

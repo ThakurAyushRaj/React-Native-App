@@ -8,31 +8,48 @@ import * as MediaLibrary from "expo-media-library";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
-  Alert,
-  Animated,
-  Easing,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
+    Alert,
+    Animated,
+    Easing,
+    Modal,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useAuth } from "@/context/AuthContext";
 import { useAppTheme } from "@/context/ThemeContext";
-import { loadStoredUser } from "@/utils/auth";
+import { loadFcmToken } from "@/utils/auth";
+import { sendDownloadNotification } from "@/utils/notifications";
+import { FilterPreset, FilterWrapper } from "../utils/image-filter-wrapper";
 
 export default function PhotoEditorScreen() {
   const NAV_OVERLAY_SPACE = 112;
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { theme } = useAppTheme();
+  const { user, isAuthLoading } = useAuth();
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [imageUri, setImageUri] = useState<string | null>(null);
+  const [originalImageUri, setOriginalImageUri] = useState<string | null>(null);
+  const [selectedFilter, setSelectedFilter] = useState<FilterPreset>("none");
   const [isDownloading, setIsDownloading] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
+  const [isDownloadModalVisible, setIsDownloadModalVisible] = useState(false);
+  const [downloadModalTitle, setDownloadModalTitle] = useState("");
+  const [downloadModalMessage, setDownloadModalMessage] = useState("");
   const pageEnter = useRef(new Animated.Value(0)).current;
+  const fcmTokenRef = useRef<string | null>(null);
+
+  const showDownloadModal = (title: string, message: string) => {
+    setDownloadModalTitle(title);
+    setDownloadModalMessage(message);
+    setIsDownloadModalVisible(true);
+  };
 
   useEffect(() => {
     Animated.timing(pageEnter, {
@@ -44,36 +61,19 @@ export default function PhotoEditorScreen() {
   }, [pageEnter]);
 
   useEffect(() => {
-    let isMounted = true;
+    loadFcmToken().then((token) => {
+      fcmTokenRef.current = token;
+    });
+  }, []);
 
-    const loadUser = async () => {
-      try {
-        const storedUser = await loadStoredUser();
-
-        if (!storedUser) {
-          router.replace("/");
-          return;
-        }
-
-        if (isMounted) {
-          setImageUri(null);
-        }
-      } catch (error) {
-        console.log("Error loading user:", error);
-        router.replace("/");
-      } finally {
-        if (isMounted) {
-          setIsCheckingAuth(false);
-        }
-      }
-    };
-
-    loadUser();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [router]);
+  useEffect(() => {
+    if (isAuthLoading) return;
+    if (!user) {
+      router.replace("/");
+    } else {
+      setIsCheckingAuth(false);
+    }
+  }, [isAuthLoading, user, router]);
 
   useEffect(() => {
     if (Platform.OS !== "web") {
@@ -93,7 +93,9 @@ export default function PhotoEditorScreen() {
       const reader = new FileReader();
       reader.onload = () => {
         if (typeof reader.result === "string") {
+          setOriginalImageUri(reader.result);
           setImageUri(reader.result);
+          setSelectedFilter("none");
         }
       };
       reader.readAsDataURL(file);
@@ -146,7 +148,9 @@ export default function PhotoEditorScreen() {
     });
 
     if (!result.canceled && result.assets?.[0]?.uri) {
+      setOriginalImageUri(result.assets[0].uri);
       setImageUri(result.assets[0].uri);
+      setSelectedFilter("none");
     }
   };
 
@@ -169,16 +173,59 @@ export default function PhotoEditorScreen() {
     }
   };
 
+  const handleCropSquare = async () => {
+    if (!imageUri) {
+      return;
+    }
+
+    try {
+      const source = await manipulateAsync(imageUri, [], {
+        compress: 1,
+        format: SaveFormat.JPEG,
+      });
+
+      const cropSize = Math.min(source.width, source.height);
+      const originX = Math.floor((source.width - cropSize) / 2);
+      const originY = Math.floor((source.height - cropSize) / 2);
+
+      const output = await manipulateAsync(
+        source.uri,
+        [
+          {
+            crop: {
+              originX,
+              originY,
+              width: cropSize,
+              height: cropSize,
+            },
+          },
+        ],
+        {
+          compress: 0.9,
+          format: SaveFormat.JPEG,
+        },
+      );
+
+      setImageUri(output.uri);
+    } catch (error) {
+      console.log("Image crop error:", error);
+      Alert.alert("Crop failed", "Could not crop the image.");
+    }
+  };
+
   const handleDownload = async () => {
     if (!imageUri) {
-      Alert.alert("No image", "Pick and edit a photo first.");
+      showDownloadModal("No image", "Pick and edit a photo first.");
       return;
     }
 
     if (Platform.OS === "web") {
       const anchor = globalThis.document?.createElement("a");
       if (!anchor) {
-        Alert.alert("Download failed", "Browser download is not available.");
+        showDownloadModal(
+          "Download failed",
+          "Browser download is not available.",
+        );
         return;
       }
 
@@ -187,6 +234,10 @@ export default function PhotoEditorScreen() {
       anchor.target = "_blank";
       anchor.rel = "noopener noreferrer";
       anchor.click();
+      showDownloadModal(
+        "Download started",
+        "Your browser started the download.",
+      );
       return;
     }
 
@@ -194,7 +245,7 @@ export default function PhotoEditorScreen() {
     try {
       const permission = await MediaLibrary.requestPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert(
+        showDownloadModal(
           "Permission required",
           "Please allow photo access to save edited images.",
         );
@@ -212,13 +263,46 @@ export default function PhotoEditorScreen() {
 
       const asset = await MediaLibrary.createAssetAsync(localUri);
       await MediaLibrary.createAlbumAsync("EditedPhotos", asset, false);
-      Alert.alert("Downloaded", "Edited photo saved to your gallery.");
+      showDownloadModal("Downloaded", "Edited photo saved to your gallery.");
+      if (fcmTokenRef.current && user?.name) {
+        sendDownloadNotification(fcmTokenRef.current, user.name).catch((e) =>
+          console.log("Photo editor download notification error:", e),
+        );
+      }
     } catch (error) {
       console.log("Download photo error:", error);
-      Alert.alert("Download failed", "Could not download the edited photo.");
+      showDownloadModal(
+        "Download failed",
+        "Could not download the edited photo.",
+      );
     } finally {
       setIsDownloading(false);
     }
+  };
+
+  const resetImage = () => {
+    if (!originalImageUri) {
+      return;
+    }
+
+    setImageUri(originalImageUri);
+    setSelectedFilter("none");
+  };
+
+  const renderPreviewImage = () => {
+    if (!imageUri) {
+      return null;
+    }
+
+    const image = (
+      <ExpoImage
+        source={{ uri: imageUri }}
+        style={styles.previewImage}
+        contentFit="cover"
+      />
+    );
+
+    return <FilterWrapper filter={selectedFilter}>{image}</FilterWrapper>;
   };
 
   if (isCheckingAuth) {
@@ -295,11 +379,7 @@ export default function PhotoEditorScreen() {
               onPress={pickImage}
             >
               {imageUri ? (
-                <ExpoImage
-                  source={{ uri: imageUri }}
-                  style={styles.previewImage}
-                  contentFit="cover"
-                />
+                renderPreviewImage()
               ) : (
                 <View style={styles.emptyPreview}>
                   <Ionicons
@@ -314,6 +394,52 @@ export default function PhotoEditorScreen() {
               )}
             </Pressable>
 
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.filterRow}
+            >
+              {[
+                { key: "none", label: "Normal" },
+                { key: "grayscale", label: "Grayscale" },
+                { key: "sepia", label: "Sepia" },
+                { key: "vivid", label: "Vivid" },
+                { key: "muted", label: "Muted" },
+              ].map((filter) => {
+                const isActive = selectedFilter === filter.key;
+
+                return (
+                  <Pressable
+                    key={filter.key}
+                    style={[
+                      styles.filterChip,
+                      {
+                        borderColor: isActive
+                          ? theme.activeBubbleBg
+                          : theme.cardBorder,
+                        backgroundColor: isActive
+                          ? theme.activeBubbleBg
+                          : theme.badgeBg,
+                      },
+                    ]}
+                    onPress={() =>
+                      setSelectedFilter(filter.key as FilterPreset)
+                    }
+                    disabled={!imageUri}
+                  >
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        { color: isActive ? "#FFFFFF" : theme.cardTitle },
+                      ]}
+                    >
+                      {filter.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
             <View style={styles.actionGrid}>
               <Pressable
                 style={[
@@ -323,6 +449,22 @@ export default function PhotoEditorScreen() {
                 onPress={pickImage}
               >
                 <Text style={styles.actionButtonText}>Pick Photo</Text>
+              </Pressable>
+
+              <Pressable
+                style={[
+                  styles.toolButton,
+                  {
+                    borderColor: theme.cardBorder,
+                    backgroundColor: theme.badgeBg,
+                  },
+                ]}
+                onPress={handleCropSquare}
+                disabled={!imageUri}
+              >
+                <Text style={[styles.toolText, { color: theme.cardTitle }]}>
+                  Crop
+                </Text>
               </Pressable>
 
               <Pressable
@@ -374,6 +516,54 @@ export default function PhotoEditorScreen() {
                   Flip Horizontal
                 </Text>
               </Pressable>
+
+              <Pressable
+                style={[
+                  styles.toolButton,
+                  {
+                    borderColor: theme.cardBorder,
+                    backgroundColor: theme.badgeBg,
+                  },
+                ]}
+                onPress={() => applyManipulation([{ flip: FlipType.Vertical }])}
+                disabled={!imageUri}
+              >
+                <Text style={[styles.toolText, { color: theme.cardTitle }]}>
+                  Flip Vertical
+                </Text>
+              </Pressable>
+
+              <Pressable
+                style={[
+                  styles.toolButton,
+                  {
+                    borderColor: theme.cardBorder,
+                    backgroundColor: theme.badgeBg,
+                  },
+                ]}
+                onPress={() => applyManipulation([{ rotate: 180 }])}
+                disabled={!imageUri}
+              >
+                <Text style={[styles.toolText, { color: theme.cardTitle }]}>
+                  Rotate 180
+                </Text>
+              </Pressable>
+
+              <Pressable
+                style={[
+                  styles.toolButton,
+                  {
+                    borderColor: theme.cardBorder,
+                    backgroundColor: theme.badgeBg,
+                  },
+                ]}
+                onPress={resetImage}
+                disabled={!imageUri || !originalImageUri}
+              >
+                <Text style={[styles.toolText, { color: theme.cardTitle }]}>
+                  Reset
+                </Text>
+              </Pressable>
             </View>
 
             <View style={styles.footerRow}>
@@ -414,6 +604,47 @@ export default function PhotoEditorScreen() {
           </View>
         </Animated.View>
       </ScrollView>
+
+      <Modal
+        visible={isDownloadModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsDownloadModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <Pressable
+            style={styles.modalBackdropPressable}
+            onPress={() => setIsDownloadModalVisible(false)}
+          />
+          <View
+            style={[
+              styles.modalCard,
+              {
+                backgroundColor: theme.cardBg,
+                borderColor: theme.cardBorder,
+              },
+            ]}
+          >
+            <Text style={[styles.modalTitle, { color: theme.cardTitle }]}>
+              {downloadModalTitle}
+            </Text>
+            <Text style={[styles.modalMessage, { color: theme.cardText }]}>
+              {downloadModalMessage}
+            </Text>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.modalPrimaryButton,
+                { backgroundColor: theme.activeBubbleBg },
+                pressed && styles.modalPrimaryButtonPressed,
+              ]}
+              onPress={() => setIsDownloadModalVisible(false)}
+            >
+              <Text style={styles.modalPrimaryButtonText}>OK</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </LinearGradient>
   );
 }
@@ -476,6 +707,23 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
   },
+  filterRow: {
+    marginTop: 12,
+    gap: 8,
+    paddingRight: 4,
+  },
+  filterChip: {
+    height: 34,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  filterChipText: {
+    fontSize: 13,
+    fontWeight: "600",
+  },
   actionGrid: {
     marginTop: 14,
     gap: 10,
@@ -533,5 +781,54 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.8,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.38)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 20,
+  },
+  modalBackdropPressable: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  modalCard: {
+    width: "100%",
+    maxWidth: 360,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+    shadowColor: "#000",
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 10,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    marginBottom: 6,
+  },
+  modalMessage: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 14,
+  },
+  modalPrimaryButton: {
+    height: 42,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalPrimaryButtonText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  modalPrimaryButtonPressed: {
+    opacity: 0.88,
+    transform: [{ scale: 0.98 }],
   },
 });

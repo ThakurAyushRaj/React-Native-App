@@ -1,43 +1,46 @@
-import { useFocusEffect } from "@react-navigation/native";
 import { Image as ExpoImage } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  Alert,
-  Animated,
-  Easing,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  View,
+    Alert,
+    Animated,
+    Easing,
+    Modal,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Switch,
+    Text,
+    TextInput,
+    View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useAuth } from "@/context/AuthContext";
 import { useAppTheme } from "@/context/ThemeContext";
-import { User, loadStoredUser, logoutUser, saveStoredUser } from "@/utils/auth";
+import { User } from "@/utils/auth";
 
 export default function SettingsScreen() {
   const NAV_OVERLAY_SPACE = 112;
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { mode, isDark, theme, setThemeMode } = useAppTheme();
-  const [user, setUser] = useState<User | null>(null);
+  const { user, isAuthLoading, updateUser, logout } = useAuth();
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [isLogoutModalVisible, setIsLogoutModalVisible] = useState(false);
   const [isPhotoPreviewModalVisible, setIsPhotoPreviewModalVisible] =
+    useState(false);
+  const [isProfileEditOptionsVisible, setIsProfileEditOptionsVisible] =
     useState(false);
   const [imageFailed, setImageFailed] = useState(false);
   const [profileNameInput, setProfileNameInput] = useState("");
   const [pendingProfilePhotoUri, setPendingProfilePhotoUri] = useState<
     string | null
   >(null);
+  const [showNameEditor, setShowNameEditor] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const pageEnter = useRef(new Animated.Value(0)).current;
   const logoutModalAnim = useRef(new Animated.Value(0)).current;
@@ -51,33 +54,15 @@ export default function SettingsScreen() {
     }).start();
   }, [pageEnter]);
 
-  const hydrateUser = useCallback(async () => {
-    try {
-      const storedUser = await loadStoredUser();
-
-      if (storedUser) {
-        setUser(storedUser);
-        setProfileNameInput(storedUser.name ?? "");
-      } else {
-        router.replace("/");
-      }
-    } catch (error) {
-      console.log("Error loading user:", error);
+  useEffect(() => {
+    if (isAuthLoading) return;
+    if (!user) {
       router.replace("/");
-    } finally {
+    } else {
+      setProfileNameInput(user.name ?? "");
       setIsCheckingAuth(false);
     }
-  }, [router]);
-
-  useEffect(() => {
-    void hydrateUser();
-  }, [hydrateUser]);
-
-  useFocusEffect(
-    useCallback(() => {
-      void hydrateUser();
-    }, [hydrateUser]),
-  );
+  }, [isAuthLoading, user, router]);
 
   useEffect(() => {
     setImageFailed(false);
@@ -85,7 +70,7 @@ export default function SettingsScreen() {
 
   const performLogout = async () => {
     try {
-      await logoutUser();
+      await logout();
       router.replace("/");
     } catch {
       Alert.alert("Error", "Failed to logout. Please try again.");
@@ -111,8 +96,8 @@ export default function SettingsScreen() {
         name: trimmedName,
       };
 
-      await saveStoredUser(updatedUser);
-      setUser(updatedUser);
+      await updateUser(updatedUser);
+      setShowNameEditor(false);
       Alert.alert("Saved", "Profile details updated.");
     } catch (error) {
       console.log("Save profile error:", error);
@@ -146,6 +131,24 @@ export default function SettingsScreen() {
     }
   };
 
+  const openProfileEditOptions = () => {
+    setIsProfileEditOptionsVisible(true);
+  };
+
+  const closeProfileEditOptions = () => {
+    setIsProfileEditOptionsVisible(false);
+  };
+
+  const handleChangeDpOption = async () => {
+    closeProfileEditOptions();
+    await openProfilePhotoPicker();
+  };
+
+  const handleChangeNameOption = () => {
+    closeProfileEditOptions();
+    setShowNameEditor(true);
+  };
+
   const applyProfilePhoto = async () => {
     if (!user || !pendingProfilePhotoUri) {
       setIsPhotoPreviewModalVisible(false);
@@ -158,8 +161,7 @@ export default function SettingsScreen() {
         photo: pendingProfilePhotoUri,
       };
 
-      await saveStoredUser(updatedUser);
-      setUser(updatedUser);
+      await updateUser(updatedUser);
       setIsPhotoPreviewModalVisible(false);
       setPendingProfilePhotoUri(null);
       Alert.alert("Saved", "Display photo updated.");
@@ -322,37 +324,66 @@ export default function SettingsScreen() {
                   },
                   pressed && styles.logoutButtonPressed,
                 ]}
-                onPress={openProfilePhotoPicker}
+                onPress={openProfileEditOptions}
               >
-                <Text style={styles.editPhotoButtonText}>Change DP</Text>
+                <Text style={styles.editPhotoButtonText}>Edit</Text>
               </Pressable>
             </View>
 
-            <View style={styles.profileFormRow}>
-              <TextInput
-                style={[
-                  styles.profileInput,
-                  { color: theme.cardTitle, borderColor: theme.cardBorder },
-                ]}
-                value={profileNameInput}
-                onChangeText={setProfileNameInput}
-                placeholder="Your name"
-                placeholderTextColor={theme.cardText}
-              />
-              <Pressable
-                style={({ pressed }) => [
-                  styles.saveProfileButton,
-                  { backgroundColor: theme.activeBubbleBg },
-                  (pressed || isSavingProfile) && styles.logoutButtonPressed,
-                ]}
-                onPress={handleSaveProfile}
-                disabled={isSavingProfile}
-              >
-                <Text style={styles.saveProfileButtonText}>
-                  {isSavingProfile ? "Saving..." : "Save Profile"}
-                </Text>
-              </Pressable>
-            </View>
+            {showNameEditor ? (
+              <View style={styles.profileFormRow}>
+                <TextInput
+                  style={[
+                    styles.profileInput,
+                    { color: theme.cardTitle, borderColor: theme.cardBorder },
+                  ]}
+                  value={profileNameInput}
+                  onChangeText={setProfileNameInput}
+                  placeholder="Your name"
+                  placeholderTextColor={theme.cardText}
+                />
+                <View style={styles.profileFormActionsRow}>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.cancelProfileButton,
+                      {
+                        borderColor: theme.cardBorder,
+                        backgroundColor: theme.badgeBg,
+                      },
+                      pressed && styles.logoutButtonPressed,
+                    ]}
+                    onPress={() => {
+                      setProfileNameInput(user?.name ?? "");
+                      setShowNameEditor(false);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.cancelProfileButtonText,
+                        { color: theme.cardTitle },
+                      ]}
+                    >
+                      Cancel
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.saveProfileButton,
+                      { backgroundColor: theme.activeBubbleBg },
+                      (pressed || isSavingProfile) &&
+                        styles.logoutButtonPressed,
+                    ]}
+                    onPress={handleSaveProfile}
+                    disabled={isSavingProfile}
+                  >
+                    <Text style={styles.saveProfileButtonText}>
+                      {isSavingProfile ? "Saving..." : "Save Name"}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
 
             <View
               style={[styles.separator, { backgroundColor: theme.cardBorder }]}
@@ -434,6 +465,92 @@ export default function SettingsScreen() {
           </View>
         </Animated.View>
       </ScrollView>
+
+      <Modal
+        visible={isProfileEditOptionsVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeProfileEditOptions}
+      >
+        <View style={styles.modalBackdrop}>
+          <Pressable
+            style={styles.modalBackdropPressable}
+            onPress={closeProfileEditOptions}
+          />
+          <View
+            style={[
+              styles.modalCard,
+              {
+                backgroundColor: theme.cardBg,
+                borderColor: theme.cardBorder,
+              },
+            ]}
+          >
+            <Text style={[styles.modalTitle, { color: theme.cardTitle }]}>
+              Edit Profile
+            </Text>
+            <Text style={[styles.modalMessage, { color: theme.cardText }]}>
+              Choose what you want to update.
+            </Text>
+
+            <View style={styles.editOptionList}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.editOptionButton,
+                  {
+                    borderColor: theme.cardBorder,
+                    backgroundColor: theme.badgeBg,
+                  },
+                  pressed && styles.modalButtonPressed,
+                ]}
+                onPress={handleChangeDpOption}
+              >
+                <Text
+                  style={[styles.editOptionText, { color: theme.cardTitle }]}
+                >
+                  Change DP
+                </Text>
+              </Pressable>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.editOptionButton,
+                  {
+                    borderColor: theme.cardBorder,
+                    backgroundColor: theme.badgeBg,
+                  },
+                  pressed && styles.modalButtonPressed,
+                ]}
+                onPress={handleChangeNameOption}
+              >
+                <Text
+                  style={[styles.editOptionText, { color: theme.cardTitle }]}
+                >
+                  Change Name
+                </Text>
+              </Pressable>
+            </View>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.singleCloseButton,
+                {
+                  borderColor: theme.cardBorder,
+                  backgroundColor: theme.badgeBg,
+                },
+                pressed && styles.modalButtonPressed,
+              ]}
+              onPress={closeProfileEditOptions}
+            >
+              <Text
+                style={[styles.modalCancelText, { color: theme.cardTitle }]}
+              >
+                Close
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={isPhotoPreviewModalVisible}
@@ -741,6 +858,10 @@ const styles = StyleSheet.create({
     marginTop: 8,
     gap: 8,
   },
+  profileFormActionsRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
   profileInput: {
     height: 40,
     borderRadius: 10,
@@ -750,10 +871,23 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.05)",
   },
   saveProfileButton: {
+    flex: 1,
     height: 38,
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
+  },
+  cancelProfileButton: {
+    flex: 1,
+    height: 38,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cancelProfileButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
   },
   saveProfileButtonText: {
     color: "#FFFFFF",
@@ -898,5 +1032,27 @@ const styles = StyleSheet.create({
   dpPreviewImage: {
     width: "100%",
     height: "100%",
+  },
+  editOptionList: {
+    gap: 10,
+    marginBottom: 12,
+  },
+  editOptionButton: {
+    height: 42,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  editOptionText: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  singleCloseButton: {
+    height: 42,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });
