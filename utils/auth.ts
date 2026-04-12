@@ -10,18 +10,20 @@ export type User = {
 };
 
 export async function loadStoredUser(): Promise<User | null> {
-  let storedUser = await AsyncStorage.getItem("user");
-
-  if (!storedUser) {
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    storedUser = await AsyncStorage.getItem("user");
-  }
-
+  const storedUser = await AsyncStorage.getItem("user");
   return storedUser ? (JSON.parse(storedUser) as User) : null;
 }
 
 export async function saveStoredUser(user: User) {
   await AsyncStorage.setItem("user", JSON.stringify(user));
+}
+
+export async function saveFcmToken(token: string) {
+  await AsyncStorage.setItem("fcm_token", token);
+}
+
+export async function loadFcmToken(): Promise<string | null> {
+  return AsyncStorage.getItem("fcm_token");
 }
 
 export async function logoutUser() {

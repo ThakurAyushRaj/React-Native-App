@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "react-native-app",
+    "name": "Waves",
     "slug": "react-native-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/applogo.png",
     "scheme": "reactnativeapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -26,17 +26,16 @@
         }
       ],
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#ffffff",
+        "foregroundImage": "./assets/images/applogo.png",
+        "monochromeImage": "./assets/images/applogo.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/applogo.png"
     },
     "plugins": [
       "expo-router",
@@ -58,7 +57,15 @@
           }
         }
       ],
-      "expo-notifications",
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "custom_faaa_v3",
+          "sounds": ["./assets/sounds/faaa.mp3"],
+          "icon": "./assets/images/logo1.png",
+          "color": "#4F8A68"
+        }
+      ],
       "expo-web-browser"
     ],
     "experiments": {

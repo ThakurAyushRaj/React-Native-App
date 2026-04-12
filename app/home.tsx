@@ -1,26 +1,29 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { File, Paths } from "expo-file-system";
+import * as LegacyFS from "expo-file-system/legacy";
 import { Image as ExpoImage } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import * as MediaLibrary from "expo-media-library";
 import { useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  Easing,
-  FlatList,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
+    ActivityIndicator,
+    Alert,
+    Animated,
+    Easing,
+    FlatList,
+    Modal,
+    Pressable,
+    StyleSheet,
+    Text,
+    TextInput,
+    View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useAuth } from "@/context/AuthContext";
 import { useAppTheme } from "@/context/ThemeContext";
-import { loadStoredUser, User } from "@/utils/auth";
+import { loadFcmToken } from "@/utils/auth";
+import { sendDownloadNotification } from "@/utils/notifications";
 import { getUnsplashPhotos, UnsplashFeedItem } from "@/utils/unsplash";
 
 export default function HomeScreen() {
@@ -29,8 +32,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { theme, isDark } = useAppTheme();
-  const [user, setUser] = useState<User | null>(null);
-  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const { user, isAuthLoading } = useAuth();
   const [images, setImages] = useState<UnsplashFeedItem[]>([]);
   const [isLoadingImages, setIsLoadingImages] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -38,9 +40,25 @@ export default function HomeScreen() {
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [isDownloadModalVisible, setIsDownloadModalVisible] = useState(false);
+  const [downloadModalTitle, setDownloadModalTitle] = useState("");
+  const [downloadModalMessage, setDownloadModalMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const pageEnter = useRef(new Animated.Value(0)).current;
   const feedListRef = useRef<FlatList<UnsplashFeedItem>>(null);
+  const fcmTokenRef = useRef<string | null>(null);
+
+  const showDownloadModal = (title: string, message: string) => {
+    setDownloadModalTitle(title);
+    setDownloadModalMessage(message);
+    setIsDownloadModalVisible(true);
+  };
+
+  useEffect(() => {
+    loadFcmToken().then((t) => {
+      fcmTokenRef.current = t;
+    });
+  }, []);
 
   const getEffectiveQuery = () => {
     const query = searchQuery.trim();
@@ -57,35 +75,10 @@ export default function HomeScreen() {
   }, [pageEnter]);
 
   useEffect(() => {
-    let isMounted = true;
-
-    const loadUser = async () => {
-      try {
-        const storedUser = await loadStoredUser();
-
-        if (storedUser) {
-          if (isMounted) {
-            setUser(storedUser);
-          }
-        } else {
-          router.replace("/"); // redirect to login
-        }
-      } catch (error) {
-        console.log("Error loading user:", error);
-        router.replace("/");
-      } finally {
-        if (isMounted) {
-          setIsCheckingAuth(false);
-        }
-      }
-    };
-
-    loadUser();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [router]);
+    if (!isAuthLoading && !user) {
+      router.replace("/");
+    }
+  }, [isAuthLoading, user, router]);
 
   const loadImageFeed = async (
     page: number,
@@ -121,16 +114,16 @@ export default function HomeScreen() {
     loadImageFeed(1, true, "landscape nature");
   }, []);
 
-  const handleLoadMore = async () => {
+  const handleLoadMore = useCallback(async () => {
     if (isLoadingImages || isLoadingMore || isRefreshing || !hasMore) {
       return;
     }
 
     setIsLoadingMore(true);
     await loadImageFeed(currentPage + 1, false);
-  };
+  }, [isLoadingImages, isLoadingMore, isRefreshing, hasMore, currentPage]);
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     feedListRef.current?.scrollToOffset({ offset: 0, animated: true });
     setIsRefreshing(true);
     const hasCustomSearch = searchQuery.trim().length > 0;
@@ -138,9 +131,9 @@ export default function HomeScreen() {
       ? 1
       : Math.floor(Math.random() * 20) + 1;
     await loadImageFeed(refreshPage, true);
-  };
+  }, [searchQuery]);
 
-  const handleSearch = async () => {
+  const handleSearch = useCallback(async () => {
     const query = searchQuery.trim();
 
     if (query.length === 0) {
@@ -151,37 +144,106 @@ export default function HomeScreen() {
     feedListRef.current?.scrollToOffset({ offset: 0, animated: true });
     setIsRefreshing(true);
     await loadImageFeed(1, true, query);
-  };
+  }, [searchQuery]);
 
-  const handleDownloadImage = async (image: UnsplashFeedItem) => {
-    try {
-      setDownloadingId(image.id);
+  const handleDownloadImage = useCallback(
+    async (image: UnsplashFeedItem) => {
+      try {
+        setDownloadingId(image.id);
 
-      const permission = await MediaLibrary.requestPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert(
-          "Permission required",
-          "Please allow photo access to save images.",
+        const permission = await MediaLibrary.requestPermissionsAsync();
+        if (!permission.granted) {
+          showDownloadModal(
+            "Permission required",
+            "Please allow photo access to save images.",
+          );
+          return;
+        }
+
+        const baseDir = LegacyFS.cacheDirectory ?? LegacyFS.documentDirectory;
+        if (!baseDir) {
+          throw new Error("No writable directory available.");
+        }
+
+        const candidateUrls = [image.fullUrl, image.smallUrl];
+        let localUri: string | null = null;
+
+        for (let i = 0; i < candidateUrls.length; i += 1) {
+          const sourceUrl = candidateUrls[i];
+          const tempUri = `${baseDir}unsplash-${image.id}-${i}.jpg`;
+
+          try {
+            const result = await LegacyFS.downloadAsync(sourceUrl, tempUri);
+            if (result.status >= 200 && result.status < 300) {
+              localUri = result.uri;
+              break;
+            }
+          } catch {
+            // Try next URL variant.
+          }
+        }
+
+        if (!localUri) {
+          throw new Error("Unable to download image from source URLs.");
+        }
+
+        await MediaLibrary.saveToLibraryAsync(localUri);
+
+        showDownloadModal("Saved", "Image downloaded to your gallery.");
+
+        if (fcmTokenRef.current && user?.name) {
+          sendDownloadNotification(fcmTokenRef.current, user.name).catch((e) =>
+            console.log("Download notification error:", e),
+          );
+        }
+      } catch (error) {
+        console.log("Home download error:", error);
+        showDownloadModal(
+          "Download failed",
+          "Could not download image. Try again.",
         );
-        return;
+      } finally {
+        setDownloadingId(null);
       }
+    },
+    [user],
+  );
 
-      const downloadedFile = await File.downloadFileAsync(
-        image.fullUrl,
-        new File(Paths.cache, `unsplash-${image.id}.jpg`),
+  const renderFeedItem = useCallback(
+    ({ item }: { item: UnsplashFeedItem }) => {
+      const isItemDownloading = downloadingId === item.id;
+
+      return (
+        <View style={[styles.feedCard, { backgroundColor: theme.cardBg }]}>
+          <ExpoImage
+            source={{ uri: item.smallUrl }}
+            style={styles.feedImage}
+            contentFit="cover"
+            cachePolicy="disk"
+          />
+          <Text style={[styles.creditText, { color: theme.cardText }]}>
+            Photo by {item.photographerName} on Unsplash
+          </Text>
+          <Pressable
+            onPress={() => handleDownloadImage(item)}
+            disabled={isItemDownloading}
+            style={({ pressed }) => [
+              styles.downloadButton,
+              { backgroundColor: theme.activeBubbleBg },
+              (pressed || isItemDownloading) && styles.downloadButtonPressed,
+            ]}
+          >
+            <Text style={styles.downloadButtonText}>
+              {isItemDownloading ? "Downloading..." : "Download"}
+            </Text>
+          </Pressable>
+        </View>
       );
-      const asset = await MediaLibrary.createAssetAsync(downloadedFile.uri);
-      await MediaLibrary.createAlbumAsync("Unsplash", asset, false);
+    },
+    [downloadingId, handleDownloadImage, theme],
+  );
 
-      Alert.alert("Success", "Image downloaded to your gallery.");
-    } catch {
-      Alert.alert("Download failed", "Could not download image. Try again.");
-    } finally {
-      setDownloadingId(null);
-    }
-  };
-
-  if (isCheckingAuth) {
+  if (isAuthLoading) {
     return (
       <View style={styles.container}>
         <Text style={styles.title}>Loading...</Text>
@@ -324,6 +386,10 @@ export default function HomeScreen() {
             onEndReached={handleLoadMore}
             refreshing={isRefreshing}
             onRefresh={handleRefresh}
+            removeClippedSubviews
+            maxToRenderPerBatch={6}
+            windowSize={10}
+            initialNumToRender={4}
             ListFooterComponent={
               isLoadingMore ? (
                 <View style={styles.footerLoader}>
@@ -334,41 +400,50 @@ export default function HomeScreen() {
                 </View>
               ) : null
             }
-            renderItem={({ item }) => {
-              const isDownloading = downloadingId === item.id;
-
-              return (
-                <View
-                  style={[styles.feedCard, { backgroundColor: theme.cardBg }]}
-                >
-                  <ExpoImage
-                    source={{ uri: item.smallUrl }}
-                    style={styles.feedImage}
-                    contentFit="cover"
-                    cachePolicy="disk"
-                  />
-                  <Text style={[styles.creditText, { color: theme.cardText }]}>
-                    Photo by {item.photographerName} on Unsplash
-                  </Text>
-                  <Pressable
-                    onPress={() => handleDownloadImage(item)}
-                    disabled={isDownloading}
-                    style={({ pressed }) => [
-                      styles.downloadButton,
-                      { backgroundColor: theme.activeBubbleBg },
-                      (pressed || isDownloading) &&
-                        styles.downloadButtonPressed,
-                    ]}
-                  >
-                    <Text style={styles.downloadButtonText}>
-                      {isDownloading ? "Downloading..." : "Download"}
-                    </Text>
-                  </Pressable>
-                </View>
-              );
-            }}
+            renderItem={renderFeedItem}
           />
         )}
+
+        <Modal
+          visible={isDownloadModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setIsDownloadModalVisible(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <Pressable
+              style={styles.modalBackdropPressable}
+              onPress={() => setIsDownloadModalVisible(false)}
+            />
+            <View
+              style={[
+                styles.modalCard,
+                {
+                  backgroundColor: theme.cardBg,
+                  borderColor: theme.cardBorder,
+                },
+              ]}
+            >
+              <Text style={[styles.modalTitle, { color: theme.cardTitle }]}>
+                {downloadModalTitle}
+              </Text>
+              <Text style={[styles.modalMessage, { color: theme.cardText }]}>
+                {downloadModalMessage}
+              </Text>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalPrimaryButton,
+                  { backgroundColor: theme.activeBubbleBg },
+                  pressed && styles.modalPrimaryButtonPressed,
+                ]}
+                onPress={() => setIsDownloadModalVisible(false)}
+              >
+                <Text style={styles.modalPrimaryButtonText}>OK</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
       </Animated.View>
     </LinearGradient>
   );
@@ -569,5 +644,54 @@ const styles = StyleSheet.create({
     height: 66,
     borderRadius: 33,
     opacity: 0.6,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.38)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 20,
+  },
+  modalBackdropPressable: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  modalCard: {
+    width: "100%",
+    maxWidth: 360,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+    shadowColor: "#000",
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 10,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    marginBottom: 6,
+  },
+  modalMessage: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 14,
+  },
+  modalPrimaryButton: {
+    height: 42,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalPrimaryButtonText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  modalPrimaryButtonPressed: {
+    opacity: 0.88,
+    transform: [{ scale: 0.98 }],
   },
 });

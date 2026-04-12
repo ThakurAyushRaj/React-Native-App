@@ -1,11 +1,16 @@
 import { File, Paths } from "expo-file-system";
 import { Image as ExpoImage } from "expo-image";
 import * as MediaLibrary from "expo-media-library";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+import { useAuth } from "@/context/AuthContext";
+import { useAppTheme } from "@/context/ThemeContext";
+import { loadFcmToken } from "@/utils/auth";
+import { sendDownloadNotification } from "@/utils/notifications";
 import {
     ActivityIndicator,
-    Alert,
     FlatList,
+    Modal,
     Pressable,
     RefreshControl,
     StyleSheet,
@@ -40,6 +45,8 @@ const NAV_OVERLAY_SPACE = 112;
 export default function GalleryScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
+  const { theme } = useAppTheme();
+  const { user } = useAuth();
 
   const [photos, setPhotos] = useState<UnsplashPhoto[]>([]);
   const [query, setQuery] = useState("");
@@ -51,8 +58,24 @@ export default function GalleryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [isPopupVisible, setIsPopupVisible] = useState(false);
+  const [popupTitle, setPopupTitle] = useState("");
+  const [popupMessage, setPopupMessage] = useState("");
+  const fcmTokenRef = useRef<string | null>(null);
 
   const accessKey = process.env.EXPO_PUBLIC_UNSPLASH_ACCESS_KEY;
+
+  const showPopup = (title: string, message: string) => {
+    setPopupTitle(title);
+    setPopupMessage(message);
+    setIsPopupVisible(true);
+  };
+
+  useEffect(() => {
+    loadFcmToken().then((token) => {
+      fcmTokenRef.current = token;
+    });
+  }, []);
 
   const cardWidth = useMemo(() => {
     const horizontalPadding = 32;
@@ -175,7 +198,7 @@ export default function GalleryScreen() {
 
       const permission = await MediaLibrary.requestPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert(
+        showPopup(
           "Permission needed",
           "Please allow photo access to save images.",
         );
@@ -190,9 +213,14 @@ export default function GalleryScreen() {
       const asset = await MediaLibrary.createAssetAsync(downloadedFile.uri);
       await MediaLibrary.createAlbumAsync("Unsplash", asset, false);
 
-      Alert.alert("Saved", "Image downloaded successfully to your gallery.");
+      showPopup("Saved", "Image downloaded successfully to your gallery.");
+      if (fcmTokenRef.current && user?.name) {
+        sendDownloadNotification(fcmTokenRef.current, user.name).catch((e) =>
+          console.log("Gallery download notification error:", e),
+        );
+      }
     } catch {
-      Alert.alert("Download failed", "Unable to save image. Please try again.");
+      showPopup("Download failed", "Unable to save image. Please try again.");
     } finally {
       setDownloadingId(null);
     }
@@ -309,6 +337,47 @@ export default function GalleryScreen() {
           }
         />
       )}
+
+      <Modal
+        visible={isPopupVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsPopupVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <Pressable
+            style={styles.modalBackdropPressable}
+            onPress={() => setIsPopupVisible(false)}
+          />
+          <View
+            style={[
+              styles.modalCard,
+              {
+                backgroundColor: theme.cardBg,
+                borderColor: theme.cardBorder,
+              },
+            ]}
+          >
+            <Text style={[styles.modalTitle, { color: theme.cardTitle }]}>
+              {popupTitle}
+            </Text>
+            <Text style={[styles.modalMessage, { color: theme.cardText }]}>
+              {popupMessage}
+            </Text>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.modalPrimaryButton,
+                { backgroundColor: theme.activeBubbleBg },
+                pressed && styles.modalPrimaryButtonPressed,
+              ]}
+              onPress={() => setIsPopupVisible(false)}
+            >
+              <Text style={styles.modalPrimaryButtonText}>OK</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -411,5 +480,54 @@ const styles = StyleSheet.create({
   },
   footerLoader: {
     paddingVertical: 14,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.38)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 20,
+  },
+  modalBackdropPressable: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  modalCard: {
+    width: "100%",
+    maxWidth: 360,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+    shadowColor: "#000",
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 10,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    marginBottom: 6,
+  },
+  modalMessage: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 14,
+  },
+  modalPrimaryButton: {
+    height: 42,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalPrimaryButtonText: {
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  modalPrimaryButtonPressed: {
+    opacity: 0.88,
+    transform: [{ scale: 0.98 }],
   },
 });

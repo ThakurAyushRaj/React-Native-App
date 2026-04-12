@@ -1,23 +1,23 @@
 import { Image as ExpoImage } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Animated,
-  Easing,
-  FlatList,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
+    ActivityIndicator,
+    Animated,
+    Easing,
+    FlatList,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useAuth } from "@/context/AuthContext";
 import { useAppTheme } from "@/context/ThemeContext";
-import { loadStoredUser } from "@/utils/auth";
 import { getUnsplashPhotos, UnsplashFeedItem } from "@/utils/unsplash";
 
 const CATEGORIES = [
@@ -39,6 +39,7 @@ export default function CategoryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { theme, isDark } = useAppTheme();
+  const { isAuthLoading, user } = useAuth();
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState("nature");
   const [searchQuery, setSearchQuery] = useState("");
@@ -60,28 +61,13 @@ export default function CategoryScreen() {
   }, [pageEnter]);
 
   useEffect(() => {
-    let isMounted = true;
-
-    const checkAuth = async () => {
-      try {
-        const storedUser = await loadStoredUser();
-        if (!storedUser) {
-          router.replace("/");
-        }
-      } catch {
-        router.replace("/");
-      } finally {
-        if (isMounted) {
-          setIsCheckingAuth(false);
-        }
-      }
-    };
-
-    checkAuth();
-    return () => {
-      isMounted = false;
-    };
-  }, [router]);
+    if (isAuthLoading) return;
+    if (!user) {
+      router.replace("/");
+    } else {
+      setIsCheckingAuth(false);
+    }
+  }, [isAuthLoading, user, router]);
 
   const fetchImages = async (query: string, page: number, replace: boolean) => {
     if (replace) {
@@ -113,32 +99,63 @@ export default function CategoryScreen() {
     }
   }, [selectedCategory, isCheckingAuth]);
 
-  const handleCategorySelect = (key: string) => {
-    if (key === selectedCategory) return;
-    setSelectedCategory(key);
-    setSearchQuery("");
-  };
+  const handleCategorySelect = useCallback(
+    (key: string) => {
+      if (key === selectedCategory) return;
+      setSelectedCategory(key);
+      setSearchQuery("");
+    },
+    [selectedCategory],
+  );
 
-  const handleSearch = () => {
+  const handleSearch = useCallback(() => {
     const q = searchQuery.trim();
     if (!q) return;
     setImages([]);
     setCurrentPage(1);
     fetchImages(q, 1, true);
-  };
+  }, [searchQuery]);
 
-  const handleLoadMore = () => {
+  const handleLoadMore = useCallback(() => {
     if (isLoading || isLoadingMore || isRefreshing || !hasMore) return;
     setIsLoadingMore(true);
     const query = searchQuery.trim() || selectedCategory;
     fetchImages(query, currentPage + 1, false);
-  };
+  }, [
+    isLoading,
+    isLoadingMore,
+    isRefreshing,
+    hasMore,
+    searchQuery,
+    selectedCategory,
+    currentPage,
+  ]);
 
-  const handleRefresh = () => {
+  const handleRefresh = useCallback(() => {
     setIsRefreshing(true);
     const query = searchQuery.trim() || selectedCategory;
     fetchImages(query, 1, true);
-  };
+  }, [searchQuery, selectedCategory]);
+
+  const renderGridItem = useCallback(
+    ({ item }: { item: UnsplashFeedItem }) => (
+      <View style={[styles.gridItem, { backgroundColor: theme.cardBg }]}>
+        <ExpoImage
+          source={{ uri: item.smallUrl }}
+          style={styles.gridImage}
+          contentFit="cover"
+          cachePolicy="disk"
+        />
+        <Text
+          style={[styles.gridCredit, { color: theme.cardText }]}
+          numberOfLines={1}
+        >
+          {item.photographerName}
+        </Text>
+      </View>
+    ),
+    [theme],
+  );
 
   if (isCheckingAuth) {
     return (
@@ -308,6 +325,10 @@ export default function CategoryScreen() {
             onEndReached={handleLoadMore}
             refreshing={isRefreshing}
             onRefresh={handleRefresh}
+            removeClippedSubviews
+            maxToRenderPerBatch={8}
+            windowSize={10}
+            initialNumToRender={6}
             ListEmptyComponent={
               <View style={styles.loaderWrap}>
                 <Text style={[styles.loaderText, { color: theme.cardText }]}>
@@ -325,24 +346,7 @@ export default function CategoryScreen() {
                 </View>
               ) : null
             }
-            renderItem={({ item }) => (
-              <View
-                style={[styles.gridItem, { backgroundColor: theme.cardBg }]}
-              >
-                <ExpoImage
-                  source={{ uri: item.smallUrl }}
-                  style={styles.gridImage}
-                  contentFit="cover"
-                  cachePolicy="disk"
-                />
-                <Text
-                  style={[styles.gridCredit, { color: theme.cardText }]}
-                  numberOfLines={1}
-                >
-                  {item.photographerName}
-                </Text>
-              </View>
-            )}
+            renderItem={renderGridItem}
           />
         )}
       </Animated.View>

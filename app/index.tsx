@@ -1,69 +1,38 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
-  GoogleSignin,
-  isErrorWithCode,
-  statusCodes,
+    GoogleSignin,
+    isErrorWithCode,
+    statusCodes,
 } from "@react-native-google-signin/google-signin";
 import * as Google from "expo-auth-session/providers/google";
-import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { useRouter } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import { useEffect, useRef, useState } from "react";
 import {
-  Alert,
-  Animated,
-  Easing,
-  Image,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
+    Alert,
+    Animated,
+    Easing,
+    Image,
+    KeyboardAvoidingView,
+    Platform,
+    Pressable,
+    StyleSheet,
+    Text,
+    TextInput,
+    View,
 } from "react-native";
 
+import { useAuth } from "@/context/AuthContext";
+import { saveFcmToken } from "@/utils/auth";
+import { sendLoginNotification } from "@/utils/notifications";
+
 WebBrowser.maybeCompleteAuthSession();
-
-function getNotificationServerUrl() {
-  const hostUri =
-    Constants.expoConfig?.hostUri ??
-    (
-      Constants as {
-        manifest2?: { extra?: { expoGo?: { debugHost?: string } } };
-      }
-    ).manifest2?.extra?.expoGo?.debugHost;
-
-  if (hostUri) {
-    const host = hostUri.split(":")[0];
-    return `http://${host}:3000/send-notification`;
-  }
-
-  return "http://127.0.0.1:3000/send-notification";
-}
-
-async function sendLoginNotification(token: string) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-  try {
-    await fetch(getNotificationServerUrl(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token }),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: true,
     shouldShowList: true,
-    shouldPlaySound: false,
+    shouldPlaySound: true,
     shouldSetBadge: false,
   }),
 });
@@ -74,11 +43,22 @@ async function registerForPushNotificationsAsync() {
   }
 
   if (Platform.OS === "android") {
-    await Notifications.setNotificationChannelAsync("default", {
-      name: "default",
+    await Notifications.setNotificationChannelAsync("custom_faaa_v3", {
+      name: "custom_faaa_v3",
       importance: Notifications.AndroidImportance.MAX,
+      sound: "faaa",
       vibrationPattern: [0, 250, 250, 250],
       lightColor: "#FF231F7C",
+      enableVibrate: true,
+      enableLights: true,
+    });
+  }
+
+  if (Platform.OS === "ios") {
+    await Notifications.setNotificationChannelAsync("custom_faaa_v3", {
+      name: "custom_faaa_v3",
+      importance: Notifications.AndroidImportance.MAX,
+      sound: "faaa.mp3",
     });
   }
 
@@ -103,6 +83,7 @@ async function setupPushNotificationsAsync() {
   const token = await registerForPushNotificationsAsync();
   if (token) {
     console.log("Firebase device push token:", token);
+    await saveFcmToken(token);
   }
   return token;
 }
@@ -118,6 +99,7 @@ if (Platform.OS !== "web") {
 
 export default function LoginScreen() {
   const router = useRouter();
+  const { user, isAuthLoading, updateUser } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [pushTokenReady, setPushTokenReady] = useState(false);
@@ -232,6 +214,12 @@ export default function LoginScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isAuthLoading && user) {
+      router.replace("/home");
+    }
+  }, [isAuthLoading, router, user]);
+
   // Handle Google sign-in response on web
   useEffect(() => {
     if (Platform.OS !== "web" || webResponse?.type !== "success") return;
@@ -266,14 +254,19 @@ export default function LoginScreen() {
             };
           }
         }
-        await AsyncStorage.setItem("user", JSON.stringify(userData));
+        await updateUser(userData);
+        if (fcmToken.current) {
+          sendLoginNotification(fcmToken.current, userData.name).catch((e) =>
+            console.log("Notification send error:", e),
+          );
+        }
         router.replace("/home");
       } catch (error) {
         console.log("Web Google sign-in error:", error);
       }
     };
     handleWebSignIn();
-  }, [webResponse, router]);
+  }, [router, updateUser, webResponse]);
 
   const handleGoogleLogin = async () => {
     if (Platform.OS === "web") {
@@ -298,9 +291,9 @@ export default function LoginScreen() {
         accessToken: "",
       };
 
-      await AsyncStorage.setItem("user", JSON.stringify(userData));
+      await updateUser(userData);
       if (fcmToken.current) {
-        sendLoginNotification(fcmToken.current).catch((e) =>
+        sendLoginNotification(fcmToken.current, userData.name).catch((e) =>
           console.log("Notification send error:", e),
         );
       }
@@ -345,18 +338,15 @@ export default function LoginScreen() {
         accessToken: "",
       };
 
-      await AsyncStorage.setItem("user", JSON.stringify(userData));
+      await updateUser(userData);
 
       if (fcmToken.current) {
-        sendLoginNotification(fcmToken.current).catch((e) =>
+        sendLoginNotification(fcmToken.current, userData.name).catch((e) =>
           console.log("Notification send error:", e),
         );
       }
 
-      const persistedUser = await AsyncStorage.getItem("user");
-      if (persistedUser) {
-        router.replace("/home");
-      }
+      router.replace("/home");
     } catch (error) {
       console.log("Error saving user:", error);
     }
