@@ -4,7 +4,7 @@
     "slug": "react-native-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/applogo.png",
+    "icon": "../assets/images/logo1.png", 
     "scheme": "reactnativeapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -27,8 +27,7 @@
       ],
       "adaptiveIcon": {
         "backgroundColor": "#ffffff",
-        "foregroundImage": "./assets/images/applogo.png",
-        "monochromeImage": "./assets/images/applogo.png"
+        "foregroundImage": "./assets/images/applogo.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false

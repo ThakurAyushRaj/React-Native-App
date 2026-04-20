@@ -7,6 +7,7 @@ export type User = {
   name: string;
   photo?: string;
   accessToken?: string;
+  supabaseUserId?: string;
 };
 
 export async function loadStoredUser(): Promise<User | null> {

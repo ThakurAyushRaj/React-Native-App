@@ -63,7 +63,7 @@ async function getAccessToken() {
   return cachedAccessToken;
 }
 
-async function sendFcmMessage(token, title, body, iconUrl) {
+async function sendFcmMessage(token, title, body) {
   const accessToken = await getAccessToken();
 
   const url = `https://fcm.googleapis.com/v1/projects/${PROJECT_ID}/messages:send`;
@@ -83,18 +83,10 @@ async function sendFcmMessage(token, title, body, iconUrl) {
           sound: "faaa",
         },
       },
-      webpush: {
-        headers: {
-          Urgency: "high",
-          TTL: "0",
-        },
-        notification: {
-          icon: iconUrl,
-        },
-      },
       apns: {
         headers: {
           "apns-priority": "10",
+          "apns-expiration": "0",
           "apns-push-type": "alert",
         },
         payload: {
@@ -121,15 +113,14 @@ async function sendFcmMessage(token, title, body, iconUrl) {
 // Login notification
 app.post("/send-notification", async (req, res) => {
   try {
-    const { token, userName, appName, serverBaseUrl } = req.body;
+    const { token, userName, appName } = req.body;
     const displayName = (userName || "User").trim();
     const displayApp = (appName || "App").trim();
-    const iconUrl = `${(serverBaseUrl || "").replace(/\/$/, "")}/applogo.png`;
 
     const title = `Hello ${displayName} 👋`;
     const body = `Welcome to ${displayApp}! Great to have you back 🚀`;
 
-    const result = await sendFcmMessage(token, title, body, iconUrl);
+    const result = await sendFcmMessage(token, title, body);
     res.json(result);
   } catch (error) {
     console.error("send-notification error:", error?.message || error);
@@ -140,15 +131,14 @@ app.post("/send-notification", async (req, res) => {
 // Download success notification
 app.post("/send-download-notification", async (req, res) => {
   try {
-    const { token, userName, appName, serverBaseUrl } = req.body;
+    const { token, userName, appName } = req.body;
     const displayName = (userName || "User").trim();
     const displayApp = (appName || "App").trim();
-    const iconUrl = `${(serverBaseUrl || "").replace(/\/$/, "")}/applogo.png`;
 
     const title = `Download Complete ✅`;
     const body = `Hey ${displayName}, your image was saved to the gallery from ${displayApp}!`;
 
-    const result = await sendFcmMessage(token, title, body, iconUrl);
+    const result = await sendFcmMessage(token, title, body);
     res.json(result);
   } catch (error) {
     console.error("send-download-notification error:", error?.message || error);

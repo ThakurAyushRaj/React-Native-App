@@ -1,13 +1,7 @@
-import Ionicons from "@expo/vector-icons/Ionicons";
-import * as LegacyFS from "expo-file-system/legacy";
-import { Image as ExpoImage } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
-import * as MediaLibrary from "expo-media-library";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
     Animated,
     Easing,
     FlatList,
@@ -15,55 +9,162 @@ import {
     Pressable,
     StyleSheet,
     Text,
-    TextInput,
     View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/context/AuthContext";
 import { useAppTheme } from "@/context/ThemeContext";
-import { loadFcmToken } from "@/utils/auth";
-import { sendDownloadNotification } from "@/utils/notifications";
-import { getUnsplashPhotos, UnsplashFeedItem } from "@/utils/unsplash";
+import { checkIn, checkOut, getTodayRecord, getMonthlyRecords } from "@/utils/attendance";
+
+type AttendanceRecord = {
+  id: string;
+  date: string;
+  checkIn: string;
+  checkOut: string | null;
+  duration: string | null;
+};
+
+function CircularTimer({ checkInTime, theme }: { checkInTime: string; theme: any }) {
+  const secondsAnim = useRef(new Animated.Value(0)).current;
+  const [seconds, setSeconds] = useState(0);
+
+  useEffect(() => {
+    secondsAnim.setValue(0);
+    const animation = Animated.loop(
+      Animated.timing(secondsAnim, {
+        toValue: 60,
+        duration: 60000,
+        easing: Easing.linear,
+        useNativeDriver: false,
+      }),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [secondsAnim]);
+
+  const getElapsed = () => {
+    const trimmed = checkInTime.trim();
+    const match = trimmed.match(/(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i);
+    if (!match) return "00:00";
+    const hours = parseInt(match[1]);
+    const mins = parseInt(match[2]);
+    const period = (match[3] || "").toUpperCase();
+
+    let hours24 = hours;
+    if (period === "PM" && hours !== 12) hours24 += 12;
+    if (period === "AM" && hours === 12) hours24 = 0;
+
+    const now = new Date();
+    const checkInDate = new Date();
+    checkInDate.setHours(hours24, mins, 0, 0);
+
+    const diff = now.getTime() - checkInDate.getTime();
+    const elapsed = Math.max(0, Math.floor(diff / 1000));
+    const hrs = Math.floor(elapsed / 3600);
+    const mns = Math.floor((elapsed % 3600) / 60);
+    return `${String(hrs).padStart(2, "0")}:${String(mns).padStart(2, "0")}`;
+  };
+
+  const rotateInterpolation = secondsAnim.interpolate({
+    inputRange: [0, 60],
+    outputRange: ["0deg", "360deg"],
+  });
+
+  return (
+    <View style={timerStyles.container}>
+      <View style={timerStyles.circleContainer}>
+        <View style={[timerStyles.progressRing, { borderColor: theme.activeBubbleBg + "30" }]} />
+        <Animated.View
+          style={[
+            timerStyles.dotContainer,
+            { transform: [{ rotate: rotateInterpolation }] },
+          ]}
+        >
+          <View
+            style={[
+              timerStyles.glowDot,
+              {
+                backgroundColor: theme.activeBubbleBg,
+                shadowColor: theme.activeBubbleBg,
+              },
+            ]}
+          />
+        </Animated.View>
+        <View style={[timerStyles.innerCircle, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder }]}>
+          <Text style={[timerStyles.elapsedTime, { color: theme.cardTitle }]}>{getElapsed()}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+const timerStyles = StyleSheet.create({
+  container: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginVertical: 12,
+  },
+  circleContainer: {
+    width: 140,
+    height: 140,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  progressRing: {
+    position: "absolute",
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    borderWidth: 3,
+  },
+  dotContainer: {
+    position: "absolute",
+    width: 140,
+    height: 140,
+    alignItems: "center",
+  },
+  glowDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginTop: -6,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  innerCircle: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  elapsedTime: {
+    fontSize: 16,
+    fontWeight: "600",
+    fontVariant: ["tabular-nums"],
+  },
+});
 
 export default function HomeScreen() {
   const NAV_OVERLAY_SPACE = 112;
-  const UNSPLASH_PAGE_SIZE = 8;
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { theme, isDark } = useAppTheme();
   const { user, isAuthLoading } = useAuth();
-  const [images, setImages] = useState<UnsplashFeedItem[]>([]);
-  const [isLoadingImages, setIsLoadingImages] = useState(true);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  const [isDownloadModalVisible, setIsDownloadModalVisible] = useState(false);
-  const [downloadModalTitle, setDownloadModalTitle] = useState("");
-  const [downloadModalMessage, setDownloadModalMessage] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
   const pageEnter = useRef(new Animated.Value(0)).current;
-  const feedListRef = useRef<FlatList<UnsplashFeedItem>>(null);
-  const fcmTokenRef = useRef<string | null>(null);
 
-  const showDownloadModal = (title: string, message: string) => {
-    setDownloadModalTitle(title);
-    setDownloadModalMessage(message);
-    setIsDownloadModalVisible(true);
-  };
-
-  useEffect(() => {
-    loadFcmToken().then((t) => {
-      fcmTokenRef.current = t;
-    });
-  }, []);
-
-  const getEffectiveQuery = () => {
-    const query = searchQuery.trim();
-    return query.length > 0 ? query : "landscape nature";
-  };
+  const [records, setRecords] = useState<AttendanceRecord[]>([]);
+  const [todayRecord, setTodayRecord] = useState<AttendanceRecord | null>(null);
+  const [isCheckInModalVisible, setIsCheckInModalVisible] = useState(false);
+  const [isCheckOutModalVisible, setIsCheckOutModalVisible] = useState(false);
+  const [isErrorModalVisible, setIsErrorModalVisible] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [checkInTime, setCheckInTime] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     Animated.timing(pageEnter, {
@@ -80,168 +181,105 @@ export default function HomeScreen() {
     }
   }, [isAuthLoading, user, router]);
 
-  const loadImageFeed = async (
-    page: number,
-    replace: boolean,
-    query = getEffectiveQuery(),
-  ) => {
-    if (replace) {
-      setIsLoadingImages(true);
+  useEffect(() => {
+    if (user?.email) {
+      loadData();
     }
+  }, [user?.email]);
 
-    const result = await getUnsplashPhotos(page, UNSPLASH_PAGE_SIZE, query);
-
-    if (replace) {
-      setImages(result.items);
-    } else {
-      setImages((previous) => {
-        const existingIds = new Set(previous.map((item) => item.id));
-        const uniqueIncoming = result.items.filter(
-          (item) => !existingIds.has(item.id),
-        );
-        return [...previous, ...uniqueIncoming];
-      });
+  const loadData = async () => {
+    if (!user?.email) return;
+    try {
+      const [today, monthly] = await Promise.all([
+        getTodayRecord(user.email),
+        getMonthlyRecords(user.email, new Date().getFullYear(), new Date().getMonth()),
+      ]);
+      setTodayRecord(today);
+      setRecords(monthly);
+    } catch (error) {
+      console.log("Error loading data:", error);
     }
-
-    setCurrentPage(page);
-    setHasMore(result.hasMore);
-    setIsLoadingImages(false);
-    setIsLoadingMore(false);
-    setIsRefreshing(false);
   };
 
-  useEffect(() => {
-    loadImageFeed(1, true, "landscape nature");
-  }, []);
-
-  const handleLoadMore = useCallback(async () => {
-    if (isLoadingImages || isLoadingMore || isRefreshing || !hasMore) {
+  const handleCheckIn = async () => {
+    if (!user?.email) {
+      setErrorMessage("Please sign in again to check in");
+      setIsErrorModalVisible(true);
       return;
     }
 
-    setIsLoadingMore(true);
-    await loadImageFeed(currentPage + 1, false);
-  }, [isLoadingImages, isLoadingMore, isRefreshing, hasMore, currentPage]);
-
-  const handleRefresh = useCallback(async () => {
-    feedListRef.current?.scrollToOffset({ offset: 0, animated: true });
-    setIsRefreshing(true);
-    const hasCustomSearch = searchQuery.trim().length > 0;
-    const refreshPage = hasCustomSearch
-      ? 1
-      : Math.floor(Math.random() * 20) + 1;
-    await loadImageFeed(refreshPage, true);
-  }, [searchQuery]);
-
-  const handleSearch = useCallback(async () => {
-    const query = searchQuery.trim();
-
-    if (query.length === 0) {
-      Alert.alert("Search", "Please enter a search term");
-      return;
-    }
-
-    feedListRef.current?.scrollToOffset({ offset: 0, animated: true });
-    setIsRefreshing(true);
-    await loadImageFeed(1, true, query);
-  }, [searchQuery]);
-
-  const handleDownloadImage = useCallback(
-    async (image: UnsplashFeedItem) => {
-      try {
-        setDownloadingId(image.id);
-
-        const permission = await MediaLibrary.requestPermissionsAsync();
-        if (!permission.granted) {
-          showDownloadModal(
-            "Permission required",
-            "Please allow photo access to save images.",
-          );
-          return;
-        }
-
-        const baseDir = LegacyFS.cacheDirectory ?? LegacyFS.documentDirectory;
-        if (!baseDir) {
-          throw new Error("No writable directory available.");
-        }
-
-        const candidateUrls = [image.fullUrl, image.smallUrl];
-        let localUri: string | null = null;
-
-        for (let i = 0; i < candidateUrls.length; i += 1) {
-          const sourceUrl = candidateUrls[i];
-          const tempUri = `${baseDir}unsplash-${image.id}-${i}.jpg`;
-
-          try {
-            const result = await LegacyFS.downloadAsync(sourceUrl, tempUri);
-            if (result.status >= 200 && result.status < 300) {
-              localUri = result.uri;
-              break;
-            }
-          } catch {
-            // Try next URL variant.
-          }
-        }
-
-        if (!localUri) {
-          throw new Error("Unable to download image from source URLs.");
-        }
-
-        await MediaLibrary.saveToLibraryAsync(localUri);
-
-        showDownloadModal("Saved", "Image downloaded to your gallery.");
-
-        if (fcmTokenRef.current && user?.name) {
-          sendDownloadNotification(fcmTokenRef.current, user.name).catch((e) =>
-            console.log("Download notification error:", e),
-          );
-        }
-      } catch (error) {
-        console.log("Home download error:", error);
-        showDownloadModal(
-          "Download failed",
-          "Could not download image. Try again.",
-        );
-      } finally {
-        setDownloadingId(null);
+    setIsLoading(true);
+    try {
+      const result = await checkIn(user.email);
+      if (result.success && result.record) {
+        setCheckInTime(result.record.checkIn);
+        setTodayRecord(result.record);
+        setRecords((prev) => [result.record!, ...prev]);
+        setIsCheckInModalVisible(true);
+      } else {
+        setErrorMessage(result.error || "Failed to check in");
+        setIsErrorModalVisible(true);
       }
-    },
-    [user],
-  );
+    } catch (error) {
+      setErrorMessage("Failed to check in. Please try again.");
+      setIsErrorModalVisible(true);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-  const renderFeedItem = useCallback(
-    ({ item }: { item: UnsplashFeedItem }) => {
-      const isItemDownloading = downloadingId === item.id;
+  const handleCheckOut = async () => {
+    if (!user?.email) {
+      setErrorMessage("Please sign in again to check out");
+      setIsErrorModalVisible(true);
+      return;
+    }
 
-      return (
-        <View style={[styles.feedCard, { backgroundColor: theme.cardBg }]}>
-          <ExpoImage
-            source={{ uri: item.smallUrl }}
-            style={styles.feedImage}
-            contentFit="cover"
-            cachePolicy="disk"
-          />
-          <Text style={[styles.creditText, { color: theme.cardText }]}>
-            Photo by {item.photographerName} on Unsplash
-          </Text>
-          <Pressable
-            onPress={() => handleDownloadImage(item)}
-            disabled={isItemDownloading}
-            style={({ pressed }) => [
-              styles.downloadButton,
-              { backgroundColor: theme.activeBubbleBg },
-              (pressed || isItemDownloading) && styles.downloadButtonPressed,
-            ]}
-          >
-            <Text style={styles.downloadButtonText}>
-              {isItemDownloading ? "Downloading..." : "Download"}
-            </Text>
-          </Pressable>
-        </View>
-      );
-    },
-    [downloadingId, handleDownloadImage, theme],
-  );
+    setIsLoading(true);
+    try {
+      const result = await checkOut(user.email);
+      if (result.success && result.record) {
+        setTodayRecord(result.record);
+        setRecords((prev) =>
+          prev.map((r) => (r.id === result.record!.id ? result.record! : r))
+        );
+        setIsCheckOutModalVisible(true);
+      } else {
+        setErrorMessage(result.error || "Failed to check out");
+        setIsErrorModalVisible(true);
+      }
+    } catch (error) {
+      setErrorMessage("Failed to check out. Please try again.");
+      setIsErrorModalVisible(true);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const getCurrentTimeString = () => {
+    const now = new Date();
+    return now.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+  };
+
+  const formatDateDisplay = (dateStr: string) => {
+    const date = new Date(dateStr + "T00:00:00");
+    return date.toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+  };
+
+  const getStatusBadge = (record: AttendanceRecord) => {
+    if (record.checkOut) {
+      return { text: "Complete", color: "#4CAF50" };
+    }
+    return { text: "Active", color: "#FF9800" };
+  };
 
   if (isAuthLoading) {
     return (
@@ -252,7 +290,45 @@ export default function HomeScreen() {
   }
 
   const displayName = user?.name?.trim() || "Guest User";
-  const hasUnsplashKey = Boolean(process.env.EXPO_PUBLIC_UNSPLASH_ACCESS_KEY);
+  const isCheckedIn = todayRecord && !todayRecord.checkOut;
+
+  const renderRecord = ({ item }: { item: AttendanceRecord }) => {
+    const status = getStatusBadge(item);
+    return (
+      <View style={[styles.recordCard, { backgroundColor: theme.cardBg }]}>
+        <View style={styles.recordHeader}>
+          <Text style={[styles.recordDate, { color: theme.cardTitle }]}>
+            {formatDateDisplay(item.date)}
+          </Text>
+          <View style={[styles.statusBadge, { backgroundColor: status.color + "20" }]}>
+            <Text style={[styles.statusText, { color: status.color }]}>
+              {status.text}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.recordTimes}>
+          <View style={styles.timeBlock}>
+            <Text style={[styles.timeLabel, { color: theme.cardText }]}>Check In</Text>
+            <Text style={[styles.timeValue, { color: theme.cardTitle }]}>{item.checkIn}</Text>
+          </View>
+          <View style={styles.timeDivider} />
+          <View style={styles.timeBlock}>
+            <Text style={[styles.timeLabel, { color: theme.cardText }]}>Check Out</Text>
+            <Text style={[styles.timeValue, { color: theme.cardTitle }]}>
+              {item.checkOut || "-"}
+            </Text>
+          </View>
+          <View style={styles.timeDivider} />
+          <View style={styles.timeBlock}>
+            <Text style={[styles.timeLabel, { color: theme.cardText }]}>Duration</Text>
+            <Text style={[styles.timeValue, { color: theme.cardTitle }]}>
+              {item.duration || "-"}
+            </Text>
+          </View>
+        </View>
+      </View>
+    );
+  };
 
   return (
     <LinearGradient
@@ -311,140 +387,200 @@ export default function HomeScreen() {
               HOME
             </Text>
           </View>
-          <Pressable
-            style={({ pressed }) => [
-              styles.refreshButton,
-              {
-                backgroundColor: theme.activeBubbleBg,
-                borderColor: isDark
-                  ? "rgba(255,255,255,0.28)"
-                  : "rgba(0,0,0,0.12)",
-              },
-              (pressed || isRefreshing) && styles.refreshButtonPressed,
-            ]}
-            disabled={isRefreshing}
-            onPress={handleRefresh}
-          >
-            {isRefreshing ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <Ionicons name="refresh" size={18} color="#FFFFFF" />
-            )}
-          </Pressable>
         </View>
 
-        <View style={styles.searchContainer}>
-          <TextInput
-            style={[
-              styles.searchInput,
-              { color: theme.cardTitle, borderColor: theme.cardBorder },
-            ]}
-            placeholder="Search images..."
-            placeholderTextColor={theme.cardText}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            onSubmitEditing={handleSearch}
-          />
-          <Pressable
-            style={({ pressed }) => [
-              styles.searchButton,
-              { backgroundColor: theme.activeBubbleBg },
-              pressed && styles.searchButtonPressed,
-            ]}
-            onPress={handleSearch}
-          >
-            <Text style={styles.searchButtonText}>🔍</Text>
-          </Pressable>
+        <View style={[styles.welcomeCard, { backgroundColor: theme.cardBg }]}>
+          <Text style={[styles.welcomeTitle, { color: theme.cardTitle }]}>
+            Welcome back, {displayName}!
+          </Text>
+          <Text style={[styles.welcomeText, { color: theme.cardText }]}>
+            {getCurrentTimeString()} • {new Date().toLocaleDateString("en-US", {
+              weekday: "long",
+              month: "long",
+              day: "numeric",
+              year: "numeric",
+            })}
+          </Text>
         </View>
 
-        {!hasUnsplashKey ? (
-          <View style={[styles.messageCard, { backgroundColor: theme.cardBg }]}>
-            <Text style={[styles.messageText, { color: theme.cardText }]}>
-              Add EXPO_PUBLIC_UNSPLASH_ACCESS_KEY in .env and restart Expo to
-              load images.
-            </Text>
-          </View>
-        ) : isLoadingImages && images.length === 0 ? (
-          <View style={styles.loaderWrap}>
-            <ActivityIndicator size="large" color={theme.activeBubbleBg} />
-            <Text style={[styles.loaderText, { color: theme.cardText }]}>
-              Loading images...
-            </Text>
-          </View>
-        ) : (
-          <FlatList
-            ref={feedListRef}
-            data={images}
-            keyExtractor={(item) => item.id}
-            style={styles.feedList}
-            contentContainerStyle={[
-              styles.feedContent,
-              { paddingBottom: NAV_OVERLAY_SPACE + insets.bottom + 12 },
-            ]}
-            showsVerticalScrollIndicator={false}
-            onEndReachedThreshold={0.35}
-            onEndReached={handleLoadMore}
-            refreshing={isRefreshing}
-            onRefresh={handleRefresh}
-            removeClippedSubviews
-            maxToRenderPerBatch={6}
-            windowSize={10}
-            initialNumToRender={4}
-            ListFooterComponent={
-              isLoadingMore ? (
-                <View style={styles.footerLoader}>
-                  <ActivityIndicator
-                    size="small"
-                    color={theme.activeBubbleBg}
-                  />
-                </View>
-              ) : null
-            }
-            renderItem={renderFeedItem}
-          />
+        {isCheckedIn && todayRecord && (
+          <CircularTimer checkInTime={todayRecord.checkIn} theme={theme} />
         )}
 
-        <Modal
-          visible={isDownloadModalVisible}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setIsDownloadModalVisible(false)}
-        >
-          <View style={styles.modalBackdrop}>
-            <Pressable
-              style={styles.modalBackdropPressable}
-              onPress={() => setIsDownloadModalVisible(false)}
-            />
-            <View
-              style={[
-                styles.modalCard,
-                {
-                  backgroundColor: theme.cardBg,
-                  borderColor: theme.cardBorder,
-                },
-              ]}
-            >
-              <Text style={[styles.modalTitle, { color: theme.cardTitle }]}>
-                {downloadModalTitle}
-              </Text>
-              <Text style={[styles.modalMessage, { color: theme.cardText }]}>
-                {downloadModalMessage}
-              </Text>
-
+        <View style={styles.attendanceSection}>
+          <View style={styles.attendanceActions}>
+            {!isCheckedIn ? (
               <Pressable
                 style={({ pressed }) => [
-                  styles.modalPrimaryButton,
-                  { backgroundColor: theme.activeBubbleBg },
-                  pressed && styles.modalPrimaryButtonPressed,
+                  styles.actionButton,
+                  { backgroundColor: "#4CAF50" },
+                  pressed && styles.actionButtonPressed,
+                  isLoading && styles.actionButtonDisabled,
                 ]}
-                onPress={() => setIsDownloadModalVisible(false)}
+                onPress={handleCheckIn}
+                disabled={isLoading}
               >
-                <Text style={styles.modalPrimaryButtonText}>OK</Text>
+                <Text style={styles.actionButtonText}>
+                  {isLoading ? "Processing..." : "Check In"}
+                </Text>
               </Pressable>
-            </View>
+            ) : (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.actionButton,
+                  { backgroundColor: "#E74C3C" },
+                  pressed && styles.actionButtonPressed,
+                  isLoading && styles.actionButtonDisabled,
+                ]}
+                onPress={handleCheckOut}
+                disabled={isLoading}
+              >
+                <Text style={styles.actionButtonText}>
+                  {isLoading ? "Processing..." : "Check Out"}
+                </Text>
+              </Pressable>
+            )}
           </View>
-        </Modal>
+        </View>
+
+        <View style={styles.historySection}>
+          <Text style={[styles.sectionTitle, { color: theme.cardTitle }]}>
+            Attendance History
+          </Text>
+          {records.length === 0 ? (
+            <View style={[styles.emptyCard, { backgroundColor: theme.cardBg }]}>
+              <Text style={[styles.emptyText, { color: theme.cardText }]}>
+                No attendance records yet
+              </Text>
+            </View>
+          ) : (
+            <FlatList
+              data={records.slice(0, 10)}
+              keyExtractor={(item) => item.id}
+              renderItem={renderRecord}
+              scrollEnabled={false}
+              style={styles.recordList}
+            />
+          )}
+        </View>
       </Animated.View>
+
+      <Modal
+        visible={isCheckInModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsCheckInModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View
+            style={[
+              styles.modalCard,
+              {
+                backgroundColor: theme.cardBg,
+                borderColor: theme.cardBorder,
+              },
+            ]}
+          >
+            <View style={[styles.modalIcon, { backgroundColor: "#4CAF5020" }]}>
+              <Text style={styles.modalIconText}>✓</Text>
+            </View>
+            <Text style={[styles.modalTitle, { color: theme.cardTitle }]}>
+              Checked In!
+            </Text>
+            <Text style={[styles.modalMessage, { color: theme.cardText }]}>
+              Your attendance has been recorded at {checkInTime}
+            </Text>
+            <Pressable
+              style={({ pressed }) => [
+                styles.modalButton,
+                { backgroundColor: theme.activeBubbleBg },
+                pressed && styles.modalButtonPressed,
+              ]}
+              onPress={() => setIsCheckInModalVisible(false)}
+            >
+              <Text style={styles.modalButtonText}>OK</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={isCheckOutModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsCheckOutModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View
+            style={[
+              styles.modalCard,
+              {
+                backgroundColor: theme.cardBg,
+                borderColor: theme.cardBorder,
+              },
+            ]}
+          >
+            <View style={[styles.modalIcon, { backgroundColor: "#E74C3C20" }]}>
+              <Text style={styles.modalIconText}>✓</Text>
+            </View>
+            <Text style={[styles.modalTitle, { color: theme.cardTitle }]}>
+              Checked Out!
+            </Text>
+            <Text style={[styles.modalMessage, { color: theme.cardText }]}>
+              Your session has ended. Have a great day!
+            </Text>
+            <Pressable
+              style={({ pressed }) => [
+                styles.modalButton,
+                { backgroundColor: theme.activeBubbleBg },
+                pressed && styles.modalButtonPressed,
+              ]}
+              onPress={() => setIsCheckOutModalVisible(false)}
+            >
+              <Text style={styles.modalButtonText}>OK</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={isErrorModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsErrorModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View
+            style={[
+              styles.modalCard,
+              {
+                backgroundColor: theme.cardBg,
+                borderColor: theme.cardBorder,
+              },
+            ]}
+          >
+            <View style={[styles.modalIcon, { backgroundColor: "#FF980020" }]}>
+              <Text style={styles.modalIconText}>!</Text>
+            </View>
+            <Text style={[styles.modalTitle, { color: theme.cardTitle }]}>
+              Notice
+            </Text>
+            <Text style={[styles.modalMessage, { color: theme.cardText }]}>
+              {errorMessage}
+            </Text>
+            <Pressable
+              style={({ pressed }) => [
+                styles.modalButton,
+                { backgroundColor: theme.activeBubbleBg },
+                pressed && styles.modalButtonPressed,
+              ]}
+              onPress={() => setIsErrorModalVisible(false)}
+            >
+              <Text style={styles.modalButtonText}>OK</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </LinearGradient>
   );
 }
@@ -482,6 +618,12 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     flex: 1,
   },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
   badge: {
     alignSelf: "flex-start",
     paddingHorizontal: 10,
@@ -495,128 +637,119 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 1.2,
   },
+  welcomeCard: {
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 8,
+  },
+  welcomeTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    marginBottom: 4,
+  },
+  welcomeText: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
   title: {
     fontSize: 24,
     fontWeight: "700",
     marginBottom: 8,
   },
-  subtitle: {
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 12,
+  attendanceSection: {
+    marginBottom: 20,
   },
-  messageCard: {
-    borderRadius: 16,
-    padding: 14,
-  },
-  messageText: {
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  loaderWrap: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  loaderText: {
-    marginTop: 10,
-    fontSize: 14,
-  },
-  feedList: {
-    width: "100%",
-    flex: 1,
-  },
-  feedContent: {
-    paddingBottom: 12,
-  },
-  feedCard: {
-    borderRadius: 18,
-    padding: 12,
-    marginBottom: 12,
-    elevation: 0,
-    shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-  },
-  feedImage: {
-    width: "100%",
-    height: 220,
-    borderRadius: 12,
-    marginBottom: 12,
-  },
-  creditText: {
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 10,
-  },
-  downloadButton: {
-    height: 38,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  downloadButtonPressed: {
-    opacity: 0.85,
-  },
-  downloadButtonText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  footerLoader: {
-    paddingVertical: 10,
-  },
-  headerRow: {
+  attendanceActions: {
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    gap: 12,
     marginBottom: 12,
   },
-  refreshButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 1,
+  actionButton: {
+    flex: 1,
+    height: 52,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#000",
-    shadowOpacity: 0.18,
+    shadowOpacity: 0.15,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },
     elevation: 4,
   },
-  refreshButtonPressed: {
-    transform: [{ scale: 0.96 }],
-    opacity: 0.9,
-  },
-  searchContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-    gap: 8,
-  },
-  searchInput: {
-    flex: 1,
-    height: 40,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    fontSize: 14,
-    borderWidth: 1,
-    backgroundColor: "white",
-  },
-  searchButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  searchButtonPressed: {
+  actionButtonPressed: {
     opacity: 0.85,
+    transform: [{ scale: 0.98 }],
   },
-  searchButtonText: {
-    fontSize: 18,
+  actionButtonDisabled: {
+    opacity: 0.6,
+  },
+  actionButtonText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  historySection: {
+    flex: 1,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    marginBottom: 12,
+  },
+  recordList: {
+    flex: 1,
+  },
+  recordCard: {
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+  },
+  recordHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  recordDate: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  recordTimes: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  timeBlock: {
+    flex: 1,
+    alignItems: "center",
+  },
+  timeDivider: {
+    width: 1,
+    backgroundColor: "rgba(128,128,128,0.2)",
+  },
+  timeLabel: {
+    fontSize: 11,
+    marginBottom: 4,
+  },
+  timeValue: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  emptyCard: {
+    borderRadius: 14,
+    padding: 24,
+    alignItems: "center",
+  },
+  emptyText: {
+    fontSize: 14,
   },
   ring1: {
     position: "absolute",
@@ -652,46 +785,53 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 20,
   },
-  modalBackdropPressable: {
-    ...StyleSheet.absoluteFillObject,
-  },
   modalCard: {
     width: "100%",
-    maxWidth: 360,
-    borderRadius: 18,
+    maxWidth: 320,
+    borderRadius: 20,
     borderWidth: 1,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 14,
-    shadowColor: "#000",
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 10,
+    padding: 24,
+    alignItems: "center",
+  },
+  modalIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  modalIconText: {
+    fontSize: 28,
+    fontWeight: "700",
+    color: "#4CAF50",
   },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "700",
-    marginBottom: 6,
+    marginBottom: 8,
+    textAlign: "center",
   },
   modalMessage: {
     fontSize: 14,
     lineHeight: 20,
-    marginBottom: 14,
+    textAlign: "center",
+    marginBottom: 20,
   },
-  modalPrimaryButton: {
-    height: 42,
+  modalButton: {
+    width: "100%",
+    height: 46,
     borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
   },
-  modalPrimaryButtonText: {
-    color: "#FFFFFF",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  modalPrimaryButtonPressed: {
-    opacity: 0.88,
+  modalButtonPressed: {
+    opacity: 0.85,
     transform: [{ scale: 0.98 }],
+  },
+  modalButtonText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "700",
   },
 });

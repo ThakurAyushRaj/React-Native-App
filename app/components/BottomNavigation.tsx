@@ -16,7 +16,7 @@ import { useAppTheme } from "@/context/ThemeContext";
 
 const NAV_HORIZONTAL_PADDING = 10;
 
-type NavKey = "home" | "category" | "photo-editor" | "settings";
+type NavKey = "home" | "performance" | "settings";
 
 type BottomNavigationProps = {
   activeKey: NavKey;
@@ -28,8 +28,7 @@ const items: {
   label: string;
 }[] = [
   { key: "home", icon: "home-outline", label: "Home" },
-  { key: "category", icon: "grid-outline", label: "Category" },
-  { key: "photo-editor", icon: "image-outline", label: "Editor" },
+  { key: "performance", icon: "stats-chart-outline", label: "Performance" },
   { key: "settings", icon: "settings-outline", label: "Settings" },
 ];
 
