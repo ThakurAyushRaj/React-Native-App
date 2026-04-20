@@ -24,18 +24,15 @@ function RootNavigator() {
 
   const isAppScreen =
     pathname === "/home" ||
-    pathname === "/photo-editor" ||
-    pathname === "/settings" ||
-    pathname === "/category";
+    pathname === "/performance" ||
+    pathname === "/settings";
 
   const activeKey =
-    pathname === "/photo-editor"
-      ? "photo-editor"
+    pathname === "/performance"
+      ? "performance"
       : pathname === "/settings"
         ? "settings"
-        : pathname === "/category"
-          ? "category"
-          : "home";
+        : "home";
 
   return (
     <View style={styles.root}>
@@ -47,9 +44,8 @@ function RootNavigator() {
             options={{ headerShown: false }}
           />
           <Stack.Screen name="home" options={{ headerShown: false }} />
-          <Stack.Screen name="category" options={{ headerShown: false }} />
+          <Stack.Screen name="performance" options={{ headerShown: false }} />
           <Stack.Screen name="settings" options={{ headerShown: false }} />
-          <Stack.Screen name="photo-editor" options={{ headerShown: false }} />
         </Stack>
       </View>
       {isAppScreen ? (

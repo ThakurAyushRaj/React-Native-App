@@ -1,7 +1,7 @@
 import {
-    GoogleSignin,
-    isErrorWithCode,
-    statusCodes,
+  GoogleSignin,
+  isErrorWithCode,
+  statusCodes,
 } from "@react-native-google-signin/google-signin";
 import * as Google from "expo-auth-session/providers/google";
 import * as Notifications from "expo-notifications";
@@ -9,17 +9,17 @@ import { useRouter } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import { useEffect, useRef, useState } from "react";
 import {
-    Alert,
-    Animated,
-    Easing,
-    Image,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  Alert,
+  Animated,
+  Easing,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 
 import { useAuth } from "@/context/AuthContext";
